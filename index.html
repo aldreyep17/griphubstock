@@ -1,0 +1,2108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Griphub Inventory Management</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        input[type='number']::-webkit-inner-spin-button,
+        input[type='number']::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        input[type='number'] { -moz-appearance: textfield; }
+
+        /* A4 Preview Styling */
+        .preview-a4 {
+            width: 210mm;
+            height: 297mm;
+            padding: 14mm;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            background: white;
+            color: #111827;
+            position: relative;
+            overflow: hidden;
+            transform-origin: top left;
+        }
+        
+        /* Responsive container for the A4 preview */
+        .preview-container {
+            width: 100%;
+            padding-top: 141.42%; /* A4 Aspect Ratio (297/210) */
+            position: relative;
+        }
+
+        .preview-container .preview-a4 {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform: scale(var(--preview-scale, 1));
+        }
+
+        .watermark-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            pointer-events: none;
+        }
+        .watermark {
+            transform: rotate(-45deg);
+            font-size: 120px;
+            font-weight: bold;
+            color: rgba(59, 130, 246, 0.1);
+            padding: 50px 40px;
+            border-radius: 10px;
+            letter-spacing: 5px;
+            text-align: center;
+            white-space: nowrap;
+        }
+        @media print {
+            body, html {
+                background: #fff;
+            }
+            body * {
+                visibility: hidden;
+            }
+            .print-area, .print-area * {
+                visibility: visible;
+            }
+            .print-area {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: auto;
+                transform: scale(1) !important;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-900">
+    <div id="root"></div>
+    <div id="print-root" class="hidden"></div>
+
+    <!-- React and Babel for JSX transpilation -->
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, query, setDoc, deleteDoc, where, getDocs, Timestamp, orderBy, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        window.firebase = {
+            initializeApp, getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut,
+            getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, query, setDoc, deleteDoc, where, getDocs, Timestamp, orderBy, writeBatch, getDoc
+        };
+    </script>
+
+    <!-- jsPDF, html2canvas, Chart.js for PDF/JPG and Chart Generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+
+    <script type="text/babel">
+        // --- React Code Starts Here ---
+        const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+        // --- Firebase Configuration ---
+        const firebaseConfig = {
+            // Your Firebase config is secure and has been retained.
+            apiKey: "AIzaSyADsec0BmVk5NeV5BCZIhNt7f6re9Og5hk",
+            authDomain: "griphub-stock.firebaseapp.com",
+            projectId: "griphub-stock",
+            storageBucket: "griphub-stock.firebasestorage.app",
+            messagingSenderId: "704654191502",
+            appId: "1:704654191502:web:54db4f7167866ea0fa12df",
+            measurementId: "G-Q5N08D310B"
+        };
+        const appId = typeof __app_id !== 'undefined' ? __app_id : firebaseConfig.appId;
+
+
+        // --- Firebase Initialization ---
+        let app, auth, db;
+        if (firebaseConfig.apiKey && window.firebase) {
+            app = window.firebase.initializeApp(firebaseConfig);
+            auth = window.firebase.getAuth(app);
+            db = window.firebase.getFirestore(app);
+        } else {
+            console.error("Firebase config is missing or has not been replaced.");
+        }
+        
+        // --- Helper Functions & Constants ---
+        const formatRupiahDisplay = (number) => {
+            if (isNaN(number) || number === null) return 'Rp 0';
+            return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(number);
+        }
+        
+        const formatNumberInput = (value) => {
+            if (!value) return '';
+            const numberValue = parseInt(value.toString().replace(/[^0-9]/g, ''), 10);
+            if (isNaN(numberValue)) return '';
+            return numberValue.toLocaleString('id-ID');
+        };
+
+        const parseFormattedNumber = (value) => {
+            if (!value) return 0;
+            return parseInt(value.toString().replace(/[^0-9]/g, ''), 10) || 0;
+        };
+
+        const formatDate = (date) => {
+            if (!date) return '';
+            const d = date.toDate ? date.toDate() : new Date(date);
+            return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+        };
+        
+        const timestampToISODate = (timestamp) => {
+            if (!timestamp) return '';
+            const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+            return date.toISOString().split('T')[0];
+        };
+        
+        const logoBase64 = 'https://i.imgur.com/SSbdOdP.png'
+
+
+        const INITIAL_PHONE_DATA = {
+            'Samsung S25 Ultra': { storage: ['256GB', '512GB', '1TB'], colors: ['Black', 'Gray', 'Blue', 'White', 'Jetblack', 'Jadegreen', 'Pinkgold'], ram: [] },
+            'Samsung S24 Ultra': { storage: ['256GB', '512GB', '1TB'], colors: ['Black', 'Gray'], ram: [] },
+            'Samsung A56': { storage: ['256GB'], colors: ['Graphite', 'Lightgray', 'Pink', 'Olive'], ram: ['8GB', '12GB'] },
+            'iPhone 13': { storage: ['128GB'], colors: ['Midnight', 'Starlight'], ram: [] },
+            'iPhone 15': { storage: ['128GB', '256GB'], colors: ['Black', 'Blue', 'Pink', 'Green', 'Yellow'], ram: [] },
+            'iPhone 16 Pro': { storage: ['256GB', '512GB', '1TB'], colors: ['Dessert', 'Black', 'White', 'Natural'], ram: [] },
+            'iPhone 16 Pro Max': { storage: ['256GB', '512GB', '1TB'], colors: ['Dessert', 'Black', 'White', 'Natural'], ram: [] },
+            'iPad 9': { storage: ['64GB'], colors: ['Silver', 'Gray'], ram: [] },
+        };
+
+        function App() {
+            const [user, setUser] = useState(null);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                if (!auth) return;
+                const unsubscribe = window.firebase.onAuthStateChanged(auth, (currentUser) => {
+                    setUser(currentUser); setLoading(false);
+                });
+                return () => unsubscribe();
+            }, []);
+
+            if (loading || !auth || !db) return <div className="flex items-center justify-center h-screen bg-gray-900 text-white"><div className="text-2xl">Initializing...</div></div>;
+            if (!user) return <LoginScreen />;
+            return <InventoryApp user={user} />;
+        }
+        
+        function LoginScreen() {
+            const handleGoogleLogin = async () => {
+                const provider = new window.firebase.GoogleAuthProvider();
+                try {
+                    await window.firebase.signInWithPopup(auth, provider);
+                } catch (error) { console.error("Error during Google sign-in:", error); }
+            };
+            return (
+                <div className="min-h-screen bg-gray-900 flex flex-col justify-center items-center text-white p-4">
+                    <img src={logoBase64} alt="Griphub Logo" className="h-24 w-24 mb-6"/>
+                    <h1 className="text-4xl font-bold mb-2 text-center">Griphub Inventory</h1>
+                    <p className="text-lg text-gray-400 mb-8">Silakan login untuk melanjutkan</p>
+                    <button onClick={handleGoogleLogin} className="flex items-center bg-white text-gray-800 font-semibold py-3 px-6 rounded-lg shadow-lg hover:bg-gray-200 transition transform hover:scale-105">
+                        <svg className="w-6 h-6 mr-3" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path><path fill="none" d="M0 0h48v48H0z"></path></svg>
+                        Masuk dengan Google
+                    </button>
+                </div>
+            );
+        }
+
+        function InventoryApp({ user }) {
+            const [page, setPage] = useState('stock');
+            const [stock, setStock] = useState([]);
+            const [phoneData, setPhoneData] = useState(null);
+            
+            // Effect to fetch and manage phone data from Firestore
+            useEffect(() => {
+                if (!user.uid || !db) return;
+
+                const phoneDataRef = window.firebase.doc(db, 'artifacts', appId, 'users', user.uid, 'phone_data', 'master_list');
+
+                const unsubscribe = window.firebase.onSnapshot(phoneDataRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        setPhoneData(docSnap.data().models);
+                    } else {
+                        // If no data exists, initialize it with the default set
+                        window.firebase.setDoc(phoneDataRef, { models: INITIAL_PHONE_DATA })
+                            .then(() => setPhoneData(INITIAL_PHONE_DATA))
+                            .catch(err => console.error("Error initializing phone data:", err));
+                    }
+                }, (error) => {
+                    console.error("Error fetching phone data:", error);
+                });
+
+                return () => unsubscribe();
+
+            }, [user.uid]);
+
+            // Effect to fetch stock data
+            useEffect(() => {
+                if (!user.uid || !db) return;
+                const stockCollectionRef = window.firebase.collection(db, 'artifacts', appId, 'users', user.uid, 'stock');
+                const q = window.firebase.query(stockCollectionRef, window.firebase.orderBy('deliveryDate', 'desc'));
+                const unsubscribe = window.firebase.onSnapshot(q, (snapshot) => {
+                    const stockData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setStock(stockData);
+                }, (error) => { console.error("Error fetching stock:", error); });
+                return () => unsubscribe();
+            }, [user.uid]);
+            
+             if (!phoneData) {
+                return <div className="flex items-center justify-center h-screen bg-gray-900 text-white"><div className="text-2xl">Loading data...</div></div>;
+            }
+
+            return (
+                <div className="min-h-screen bg-gray-900 text-gray-100 font-sans">
+                    <Header setPage={setPage} user={user} currentPage={page} />
+                    <main className="p-4 sm:p-6 lg:p-8 pb-24 md:pb-8">
+                        {page === 'stock' && <StockListPage userId={user.uid} stockData={stock} phoneData={phoneData} />}
+                        {page === 'invoices' && <InvoiceListPage userId={user.uid} />}
+                        {page === 'reports' && <FinancialReportPage stockData={stock} />}
+                        {page === 'data' && <PhoneDataManagementPage userId={user.uid} phoneData={phoneData} setPhoneData={setPhoneData} />}
+                    </main>
+                    <BottomNavBar currentPage={page} setPage={setPage} />
+                </div>
+            );
+        }
+
+        function Header({ setPage, user, currentPage }) {
+            const [isMenuOpen, setIsMenuOpen] = useState(false);
+            const handleLogout = async () => {
+                try { await window.firebase.signOut(auth); } catch (error) { console.error("Error signing out:", error); }
+            };
+
+            const NavButton = ({ pageName, children }) => (
+                <button 
+                    onClick={() => { setPage(pageName); setIsMenuOpen(false); }} 
+                    className={`w-full text-left px-4 py-2 rounded-md text-sm font-medium transition whitespace-nowrap ${currentPage === pageName ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+                >
+                    {children}
+                </button>
+            );
+
+            return (
+                <header className="bg-gray-800 shadow-md sticky top-0 z-[998]">
+                    <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+                        <div className="flex items-center justify-between h-20">
+                            <div className="flex items-center space-x-4">
+                                <img src={logoBase64} alt="Griphub Logo" className="h-12 w-12"/>
+                                <h1 className="text-xl md:text-2xl font-bold text-white">Griphub Inventory</h1>
+                            </div>
+                            <nav className="hidden md:flex items-center space-x-2">
+                                <NavButton pageName='stock'>Stock List</NavButton>
+                                <NavButton pageName='invoices'>Invoice List</NavButton>
+                                <NavButton pageName='reports'>Financial Report</NavButton>
+                                <NavButton pageName='data'>Manage Data</NavButton>
+                            </nav>
+                            <div className="flex items-center gap-4">
+                                <div className="hidden sm:flex items-center gap-3">
+                                    <img src={user.photoURL} alt={user.displayName} className="h-10 w-10 rounded-full" />
+                                    <span className="text-white text-sm font-medium">{user.displayName}</span>
+                                </div>
+                                <button onClick={handleLogout} className="flex items-center bg-red-600 hover:bg-red-700 text-white font-bold p-2 rounded-lg text-sm transition">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fillRule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V5h10a1 1 0 100-2H4a1 1 0 00-1-1zm10.293 9.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z" clipRule="evenodd" />
+                                    </svg>
+                                    <span className="hidden sm:inline sm:ml-2">Logout</span>
+                                </button>
+                                <div className="md:hidden">
+                                    <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="text-gray-300 hover:text-white focus:outline-none">
+                                        <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            {isMenuOpen ? (
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                            ) : (
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+                                            )}
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        {isMenuOpen && (
+                            <div className="md:hidden absolute left-0 w-full bg-gray-800 z-50 shadow-lg">
+                                <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
+                                    <NavButton pageName='stock'>Stock List</NavButton>
+                                    <NavButton pageName='invoices'>Invoice List</NavButton>
+                                    <NavButton pageName='reports'>Financial Report</NavButton>
+                                    <NavButton pageName='data'>Manage Data</NavButton>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </header>
+            );
+        }
+
+        function BottomNavBar({ currentPage, setPage }) {
+            const NavItem = ({ pageName, icon, label }) => {
+              const isActive = currentPage === pageName;
+              return (
+                <button
+                  onClick={() => setPage(pageName)}
+                  className={`flex flex-col items-center justify-center w-full pt-2 pb-1 transition-colors duration-200 ${isActive ? 'text-blue-400' : 'text-gray-400 hover:text-white'}`}
+                >
+                  {icon(isActive)}
+                  <span className={`text-xs mt-1 ${isActive ? 'font-bold' : 'font-normal'}`}>{label}</span>
+                </button>
+              );
+            };
+
+            return (
+                <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-gray-800 shadow-[0_-2px_10px_rgba(0,0,0,0.3)] z-50 flex justify-around items-center px-2">
+                    <NavItem
+                        pageName="stock"
+                        label="Stock"
+                        icon={(isActive) => <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>}
+                    />
+                    <NavItem
+                        pageName="invoices"
+                        label="Invoices"
+                        icon={(isActive) => <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>}
+                    />
+                    <NavItem
+                        pageName="reports"
+                        label="Reports"
+                        icon={(isActive) => <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>}
+                    />
+                     <NavItem
+                        pageName="data"
+                        label="Data"
+                        icon={(isActive) => <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>}
+                    />
+                </div>
+            )
+        }
+
+        function StockListPage({ userId, stockData, phoneData }) {
+            const [isInventoryModalOpen, setInventoryModalOpen] = useState(false);
+            const [isInvoiceModalOpen, setInvoiceModalOpen] = useState(false);
+            const [editingItem, setEditingItem] = useState(null);
+            const [itemToDelete, setItemToDelete] = useState(null);
+            const [filters, setFilters] = useState({ model: '', availability: '', searchTerm: '' });
+            const [bulkEditMode, setBulkEditMode] = useState(false);
+            const [isBulkEditModalOpen, setIsBulkEditModalOpen] = useState(false);
+            const [selectedItemIds, setSelectedItemIds] = useState(new Set());
+
+            const handleDelete = async () => {
+                if (!itemToDelete || !userId) return;
+                try {
+                    const docRef = window.firebase.doc(db, 'artifacts', appId, 'users', userId, 'stock', itemToDelete.id);
+                    await window.firebase.deleteDoc(docRef);
+                    setItemToDelete(null);
+                } catch (error) { console.error("Error deleting document:", error); }
+            };
+
+            const phoneModelsInStock = useMemo(() => [...new Set(stockData.map(item => item.phoneModel))].sort(), [stockData]);
+
+            const filteredStock = useMemo(() => {
+                return stockData.filter(item => {
+                    const modelMatch = filters.model ? item.phoneModel === filters.model : true;
+                    const availabilityMatch = filters.availability ? item.availability === filters.availability : true;
+                    const searchLower = filters.searchTerm.toLowerCase();
+                    const searchMatch = filters.searchTerm ? (Object.values(item).some(val => val?.toString().toLowerCase().includes(searchLower))) : true;
+                    return modelMatch && availabilityMatch && searchMatch;
+                });
+            }, [stockData, filters]);
+
+            const toggleBulkEditMode = () => {
+                setBulkEditMode(!bulkEditMode);
+                setSelectedItemIds(new Set());
+            };
+
+            const handleSelectItem = (itemId) => {
+                setSelectedItemIds(prev => {
+                    const newSet = new Set(prev);
+                    if (newSet.has(itemId)) {
+                        newSet.delete(itemId);
+                    } else {
+                        newSet.add(itemId);
+                    }
+                    return newSet;
+                });
+            };
+
+            const handleSelectAll = () => {
+                if (selectedItemIds.size === filteredStock.length) {
+                    setSelectedItemIds(new Set());
+                } else {
+                    setSelectedItemIds(new Set(filteredStock.map(item => item.id)));
+                }
+            };
+            
+            const handleBulkMarkAsPaid = async () => {
+                if (selectedItemIds.size === 0) {
+                    alert("No items selected.");
+                    return;
+                }
+                const batch = window.firebase.writeBatch(db);
+                selectedItemIds.forEach(id => {
+                    const docRef = window.firebase.doc(db, 'artifacts', appId, 'users', userId, 'stock', id);
+                    batch.update(docRef, { paidStatus: "Paid" });
+                });
+                try {
+                    await batch.commit();
+                    alert(`${selectedItemIds.size} items marked as Paid.`);
+                    toggleBulkEditMode();
+                } catch (error) {
+                    console.error("Error updating documents in batch: ", error);
+                    alert("Failed to update items.");
+                }
+            };
+
+
+            const tableHeaders = ['Actions', 'Invoice', 'Phone Model', 'IMEI', 'Delivery Date', 'Price', 'Discount', 'HPP', 'Supplier', 'Purchaser', 'Purchase Account', 'Paid Status', 'Notes', 'Availability', 'Sold Price', 'Profit', 'Customer'];
+            
+            return (
+                <div className="container mx-auto pb-20">
+                    <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
+                        <h2 className="text-3xl font-bold text-white">Stock List</h2>
+                        <div className="flex items-center gap-4 flex-wrap">
+                             <button onClick={toggleBulkEditMode} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg shadow-lg transition transform hover:scale-105">
+                                {bulkEditMode ? 'Cancel Bulk Edit' : 'Bulk Edit'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="bg-gray-800 p-4 rounded-lg mb-6 flex flex-wrap items-center gap-4">
+                        <h3 className="text-lg font-semibold mr-4 text-white">Filters:</h3>
+                        <input type="text" placeholder="Search..." value={filters.searchTerm} onChange={e => setFilters(f => ({...f, searchTerm: e.target.value}))} className="bg-gray-700 text-white p-2 rounded-md border border-gray-600 w-full sm:w-auto flex-grow" />
+                        <select value={filters.model} onChange={e => setFilters(f => ({...f, model: e.target.value}))} className="bg-gray-700 text-white p-2 rounded-md border border-gray-600">
+                            <option value="">All Models</option>
+                            {phoneModelsInStock.map(model => <option key={model} value={model}>{model}</option>)}
+                        </select>
+                        <select value={filters.availability} onChange={e => setFilters(f => ({...f, availability: e.target.value}))} className="bg-gray-700 text-white p-2 rounded-md border border-gray-600">
+                            <option value="">All Availability</option>
+                            <option value="Available">Available</option>
+                            <option value="SOLD">Sold</option>
+                        </select>
+                        <button onClick={() => setFilters({ model: '', availability: '', searchTerm: '' })} className="text-sm text-blue-400 hover:text-blue-300">Reset</button>
+                        <div className="text-sm text-gray-400 ml-auto">Showing {filteredStock.length} of {stockData.length} items</div>
+                    </div>
+
+                    {isInventoryModalOpen && <InventoryInputModal closeModal={() => setInventoryModalOpen(false)} userId={userId} phoneData={phoneData} />}
+                    {isInvoiceModalOpen && <SalesInvoiceModal stock={stockData} closeModal={() => setInvoiceModalOpen(false)} userId={userId} />}
+                    {editingItem && <EditStockModal item={editingItem} closeModal={() => setEditingItem(null)} userId={userId} phoneData={phoneData} />}
+                    {itemToDelete && <ConfirmDeleteModal title="Delete Stock Item" onConfirm={handleDelete} onCancel={() => setItemToDelete(null)} item={itemToDelete} />}
+                    {isBulkEditModalOpen && <BulkEditModal 
+                        closeModal={() => setIsBulkEditModalOpen(false)}
+                        userId={userId}
+                        selectedItemIds={selectedItemIds}
+                        onUpdateSuccess={() => {
+                            setIsBulkEditModalOpen(false);
+                            toggleBulkEditMode();
+                        }}
+                    />}
+
+                    <div className="bg-gray-800 shadow-2xl rounded-lg overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-700 text-white">
+                            <thead className="bg-gray-700"><tr>
+                                {bulkEditMode && <th className="px-3 py-3"><input type="checkbox" className="form-checkbox h-5 w-5 bg-gray-900 border-gray-600 text-purple-600 rounded focus:ring-purple-500" onChange={handleSelectAll} checked={selectedItemIds.size === filteredStock.length && filteredStock.length > 0} /></th>}
+                                {!bulkEditMode && <th className="px-3 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">No</th>}
+                                {tableHeaders.map(h => ( <th key={h} scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">{h}</th> ))}
+                            </tr></thead>
+                            <tbody className="bg-gray-800 divide-y divide-gray-700">
+                                {filteredStock.map((item, index) => (
+                                    <tr key={item.id} className={`${selectedItemIds.has(item.id) ? 'bg-purple-900/50' : ''} hover:bg-gray-700 transition`}>
+                                        {bulkEditMode && <td className="px-3 py-2"><input type="checkbox" className="form-checkbox h-5 w-5 bg-gray-900 border-gray-600 text-purple-600 rounded focus:ring-purple-500" checked={selectedItemIds.has(item.id)} onChange={() => handleSelectItem(item.id)} /></td>}
+                                        {!bulkEditMode && <td className="px-3 py-2 whitespace-nowrap text-sm">{index + 1}</td>}
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm">
+                                            <div className="flex items-center gap-3">
+                                                <button onClick={() => setEditingItem(item)} className="text-yellow-400 hover:text-yellow-300" title="Edit">
+                                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" /><path fillRule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clipRule="evenodd" /></svg>
+                                                </button>
+                                                <button onClick={() => setItemToDelete(item)} className="text-red-500 hover:text-red-400" title="Delete">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
+                                                </button>
+                                            </div>
+                                        </td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm">{item.invoice}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm font-semibold">{item.phoneModel} {item.storage} {item.color}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm">{item.imei}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm">{item.deliveryDate ? formatDate(item.deliveryDate) : ''}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm">{formatRupiahDisplay(item.price)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm">{item.discount}%</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm">{formatRupiahDisplay(item.hpp)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm">{item.supplier}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm">{item.purchaser}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm">{item.purchaseAccount}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm"> <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${item.paidStatus === 'Paid' ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'}`}>{item.paidStatus}</span> </td>
+                                        <td className="px-3 py-2 whitespace-pre-wrap text-sm">{item.notes}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm"> <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${item.availability === 'SOLD' ? 'bg-yellow-200 text-yellow-800' : 'bg-blue-200 text-blue-800'}`}>{item.availability}</span> </td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm">{formatRupiahDisplay(item.soldPrice)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm font-bold text-green-400">{formatRupiahDisplay(item.profit)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm">{item.customer}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                     {bulkEditMode && selectedItemIds.size > 0 && (
+                        <div className="fixed bottom-16 md:bottom-4 left-0 right-0 bg-gray-700 p-4 shadow-lg z-30 flex justify-center items-center gap-4">
+                            <span className="text-white">{selectedItemIds.size} item(s) selected</span>
+                            <button onClick={handleBulkMarkAsPaid} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg">
+                                Mark as Paid
+                            </button>
+                            <button onClick={() => setIsBulkEditModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">
+                                Update Field...
+                            </button>
+                        </div>
+                    )}
+                    {/* Floating Action Buttons */}
+                    <div className="fixed bottom-24 md:bottom-6 right-6 flex flex-col items-center gap-4 z-40">
+                         <button 
+                            onClick={() => setInventoryModalOpen(true)} 
+                            className="bg-blue-600 hover:bg-blue-700 text-white rounded-full h-16 w-16 flex items-center justify-center shadow-lg transform hover:scale-110 transition-transform"
+                            title="Input Inventory"
+                        >
+                           <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                        </button>
+                        <button 
+                            onClick={() => setInvoiceModalOpen(true)} 
+                            className="bg-green-600 hover:bg-green-700 text-white rounded-full h-16 w-16 flex items-center justify-center shadow-lg transform hover:scale-110 transition-transform"
+                            title="Create Sales Invoice"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+        
+        function BulkEditModal({ closeModal, userId, selectedItemIds, onUpdateSuccess }) {
+            const [fieldToUpdate, setFieldToUpdate] = useState('paidStatus');
+            const [newValue, setNewValue] = useState('Paid');
+            const [isSubmitting, setIsSubmitting] = useState(false);
+
+            const editableFields = {
+                paidStatus: { label: 'Paid Status', type: 'select', options: ['Paid', 'Unpaid'] },
+                availability: { label: 'Availability', type: 'select', options: ['Available', 'SOLD'] },
+                supplier: { label: 'Supplier', type: 'text' },
+                purchaser: { label: 'Purchaser', type: 'text' },
+                purchaseAccount: { label: 'Purchase Account', type: 'text' },
+                notes: { label: 'Notes', type: 'textarea' },
+            };
+
+            useEffect(() => {
+                handleFieldChange({ target: { value: fieldToUpdate } });
+            }, []);
+
+
+            const handleFieldChange = (e) => {
+                const newField = e.target.value;
+                setFieldToUpdate(newField);
+                if (editableFields[newField].type === 'select') {
+                    setNewValue(editableFields[newField].options[0]);
+                } else {
+                    setNewValue('');
+                }
+            };
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (isSubmitting || selectedItemIds.size === 0) return;
+
+                if (editableFields[fieldToUpdate].type !== 'select' && !newValue.trim()) {
+                     alert('Value cannot be empty.');
+                     return;
+                }
+
+                setIsSubmitting(true);
+                const batch = window.firebase.writeBatch(db);
+                const updateData = { [fieldToUpdate]: newValue };
+
+                selectedItemIds.forEach(id => {
+                    const docRef = window.firebase.doc(db, 'artifacts', appId, 'users', userId, 'stock', id);
+                    batch.update(docRef, updateData);
+                });
+
+                try {
+                    await batch.commit();
+                    alert(`${selectedItemIds.size} items updated successfully.`);
+                    onUpdateSuccess();
+                } catch (error) {
+                    console.error("Error during bulk update: ", error);
+                    alert("Failed to update items.");
+                } finally {
+                    setIsSubmitting(false);
+                }
+            };
+
+            const renderValueInput = () => {
+                const field = editableFields[fieldToUpdate];
+                switch(field.type) {
+                    case 'select':
+                        return (
+                            <select value={newValue} onChange={(e) => setNewValue(e.target.value)} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600 text-white">
+                                {field.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                            </select>
+                        );
+                    case 'textarea':
+                        return (
+                             <textarea value={newValue} onChange={(e) => setNewValue(e.target.value)} placeholder="Enter new value" rows="3" className="w-full p-3 bg-gray-700 rounded-md border border-gray-600 text-white"></textarea>
+                        );
+                    default:
+                        return (
+                            <input type="text" value={newValue} onChange={(e) => setNewValue(e.target.value)} placeholder="Enter new value" className="w-full p-3 bg-gray-700 rounded-md border border-gray-600 text-white" />
+                        );
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-60 p-4">
+                    <div className="bg-gray-800 rounded-lg shadow-xl p-8 w-full max-w-lg text-white">
+                        <h3 className="text-2xl font-bold mb-6">Bulk Update Items</h3>
+                        <p className="text-gray-400 mb-4">{selectedItemIds.size} items selected.</p>
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-300 mb-2">Field to Update</label>
+                                <select value={fieldToUpdate} onChange={handleFieldChange} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600">
+                                   {Object.entries(editableFields).map(([key, {label}]) => (
+                                      <option key={key} value={key}>{label}</option>
+                                   ))}
+                                </select>
+                            </div>
+                            <div>
+                                 <label className="block text-sm font-medium text-gray-300 mb-2">New Value</label>
+                                 {renderValueInput()}
+                            </div>
+                            <div className="flex justify-end space-x-4 pt-4">
+                                <button type="button" onClick={closeModal} className="px-6 py-2 rounded-md bg-gray-600 hover:bg-gray-500 transition">Cancel</button>
+                                <button type="submit" disabled={isSubmitting} className="px-6 py-2 rounded-md bg-purple-600 hover:bg-purple-700 transition disabled:bg-purple-800 disabled:cursor-not-allowed">
+                                    {isSubmitting ? 'Updating...' : 'Update Selected Items'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        }
+
+        function InventoryInputModal({ closeModal, userId, phoneData }) {
+            const [formData, setFormData] = useState({ invoice: '', phoneModel: '', manualPhoneModel: '', storage: '', color: '', ram: '', price: 0, discount: 0, supplier: '', purchaser: '', purchaseAccount: '', paidStatus: 'Unpaid', notes: '' });
+            const [priceDisplay, setPriceDisplay] = useState('');
+            const [isManual, setIsManual] = useState(false);
+            const [isSubmitting, setIsSubmitting] = useState(false);
+            const [isIndividualColorMode, setIsIndividualColorMode] = useState(false);
+            const [imeiColorList, setImeiColorList] = useState([{ imei: '', color: '' }]);
+            const [bulkImei, setBulkImei] = useState('');
+
+            const handlePriceChange = (e) => {
+                const displayValue = formatNumberInput(e.target.value);
+                const rawValue = parseFormattedNumber(e.target.value);
+                setPriceDisplay(displayValue);
+                setFormData(prev => ({ ...prev, price: rawValue }));
+            };
+
+            const handleChange = (e) => {
+                const { name, value } = e.target;
+                if (name === 'purchaser') { setFormData(prev => ({ ...prev, purchaser: value, paidStatus: value.toUpperCase() === 'SENDIRI' ? 'Paid' : 'Unpaid' })); return; }
+                if (name === "phoneModel" && value === "manual") { setIsManual(true); setFormData({ ...formData, phoneModel: '', manualPhoneModel: '', storage: '', color: '', ram: '' }); return; }
+                if (name === "phoneModel" && isManual) setIsManual(false);
+                setFormData(prev => ({ ...prev, [name]: value }));
+                if (name === "phoneModel") {
+                    const newModel = value;
+                    const modelData = phoneData[newModel] || {};
+                    const defaultColor = modelData.colors && modelData.colors.length > 0 ? modelData.colors[0] : '';
+                    setFormData(prev => ({ ...prev, storage: '', color: '', ram: '' }));
+                    setImeiColorList([{ imei: '', color: defaultColor }]);
+                }
+            };
+            
+            const handleImeiColorChange = (index, field, value) => {
+                const newList = [...imeiColorList];
+                newList[index][field] = value;
+                setImeiColorList(newList);
+            };
+
+            const addImeiColorRow = () => {
+                const modelData = phoneData[formData.phoneModel] || {};
+                const defaultColor = modelData.colors && modelData.colors.length > 0 ? modelData.colors[0] : '';
+                setImeiColorList([...imeiColorList, { imei: '', color: defaultColor }]);
+            };
+
+            const removeImeiColorRow = (index) => {
+                const newList = imeiColorList.filter((_, i) => i !== index);
+                setImeiColorList(newList);
+            };
+
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (!db || isSubmitting) return;
+                setIsSubmitting(true);
+
+                const deliveryTimestamp = window.firebase.Timestamp.fromDate(new Date());
+                const baseItem = {
+                    ...formData,
+                    phoneModel: isManual ? formData.manualPhoneModel : formData.phoneModel,
+                    price: formData.price,
+                    discount: parseFloat(formData.discount) || 0,
+                    hpp: formData.price - (formData.price * ((parseFloat(formData.discount) || 0) / 100)),
+                    deliveryDate: deliveryTimestamp,
+                    availability: 'Available',
+                    customer: '',
+                    soldPrice: null,
+                    profit: null
+                };
+                delete baseItem.manualPhoneModel;
+
+                let itemsToSubmit = [];
+                if (isIndividualColorMode) {
+                    itemsToSubmit = imeiColorList.filter(item => item.imei.trim() !== '').map(item => ({
+                        ...baseItem,
+                        imei: item.imei.trim(),
+                        color: item.color,
+                    }));
+                } else {
+                    const imeis = bulkImei.split('\n').map(i => i.trim()).filter(i => i);
+                    if (imeis.length === 0) {
+                        alert("Please enter at least one IMEI.");
+                        setIsSubmitting(false);
+                        return;
+                    }
+                    itemsToSubmit = imeis.map(imei => ({
+                        ...baseItem,
+                        imei: imei,
+                    }));
+                }
+                
+                if (itemsToSubmit.length === 0) {
+                     alert("No valid items to submit.");
+                     setIsSubmitting(false);
+                     return;
+                }
+
+                try {
+                    const stockCollectionRef = window.firebase.collection(db, 'artifacts', appId, 'users', userId, 'stock');
+                    const promises = itemsToSubmit.map(itemData => {
+                        return window.firebase.addDoc(stockCollectionRef, itemData);
+                    });
+                    await Promise.all(promises);
+                    closeModal();
+                } catch (error) {
+                    console.error("Error adding documents: ", error);
+                    alert("Error submitting data. Please try again.");
+                } finally {
+                    setIsSubmitting(false);
+                }
+            };
+
+            const selectedModel = formData.phoneModel;
+            const modelData = phoneData[selectedModel] || {};
+            const isPurchaserSendiri = formData.purchaser.toUpperCase() === 'SENDIRI';
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-[9999] p-4">
+                    <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-2xl max-h-[calc(100vh-2rem)] flex flex-col text-white">
+                        <h3 className="text-2xl font-bold mb-6 flex-shrink-0">Add New Inventory</h3>
+                        <form onSubmit={handleSubmit} className="space-y-4 overflow-y-auto flex-grow pr-2">
+                            <input type="text" name="invoice" placeholder="Invoice Number" onChange={handleChange} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" />
+                            <select name="phoneModel" onChange={handleChange} value={formData.phoneModel} required={!isManual} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600">
+                                <option value="">Select Phone Model</option>
+                                {Object.keys(phoneData).sort().map(model => <option key={model} value={model}>{model}</option>)}
+                                <option value="manual">-- Manual Input --</option>
+                            </select>
+                            
+                            {isManual ? (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <input type="text" name="manualPhoneModel" placeholder="Enter Phone Model" onChange={handleChange} value={formData.manualPhoneModel} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" />
+                                    <input type="text" name="storage" placeholder="Storage (e.g., 256GB)" onChange={handleChange} value={formData.storage} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" />
+                                </div>
+                            ) : selectedModel && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <select name="storage" onChange={handleChange} value={formData.storage} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"><option value="">Select Storage</option>{modelData.storage?.map(s => <option key={s} value={s}>{s}</option>)}</select>
+                                    {!isIndividualColorMode && <select name="color" onChange={handleChange} value={formData.color} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"><option value="">Select Color</option>{modelData.colors?.map(c => <option key={c} value={c}>{c}</option>)}</select>}
+                                </div>
+                            )}
+
+                            {modelData.ram && modelData.ram.length > 0 && (<select name="ram" onChange={handleChange} value={formData.ram} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"> <option value="">Select RAM</option> {modelData.ram.map(r => <option key={r} value={r}>{r}</option>)} </select>)}
+                            
+                            {selectedModel && !isManual && (
+                                <div className="flex items-center gap-2 text-sm">
+                                    <input type="checkbox" id="individualColorMode" checked={isIndividualColorMode} onChange={() => setIsIndividualColorMode(!isIndividualColorMode)} className="form-checkbox h-4 w-4 bg-gray-900 border-gray-600 text-blue-600 rounded focus:ring-blue-500"/>
+                                    <label htmlFor="individualColorMode">Input Warna per IMEI</label>
+                                </div>
+                            )}
+
+                            {isIndividualColorMode ? (
+                                <div className="space-y-3">
+                                    {imeiColorList.map((item, index) => (
+                                        <div key={index} className="flex items-center gap-2">
+                                            <input type="text" placeholder="IMEI" value={item.imei} onChange={(e) => handleImeiColorChange(index, 'imei', e.target.value)} className="w-full p-2 bg-gray-600 rounded-md border border-gray-500" />
+                                            <select value={item.color} onChange={(e) => handleImeiColorChange(index, 'color', e.target.value)} className="w-full p-2 bg-gray-600 rounded-md border border-gray-500">
+                                                {modelData.colors?.map(c => <option key={c} value={c}>{c}</option>)}
+                                            </select>
+                                            <button type="button" onClick={() => removeImeiColorRow(index)} className="p-2 bg-red-600 rounded-md hover:bg-red-700 transition">-</button>
+                                        </div>
+                                    ))}
+                                    <button type="button" onClick={addImeiColorRow} className="w-full p-2 bg-blue-600 rounded-md hover:bg-blue-700 transition">Tambah IMEI</button>
+                                </div>
+                            ) : (
+                                <textarea name="imei" placeholder="Enter IMEIs (one per line for bulk input)" onChange={(e) => setBulkImei(e.target.value)} value={bulkImei} required rows="3" className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"></textarea>
+                            )}
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4"><input type="text" name="price" placeholder="Price (IDR)" value={priceDisplay} onChange={handlePriceChange} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" /><input type="number" name="discount" placeholder="Discount (%)" onChange={handleChange} value={formData.discount} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" /></div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4"><input type="text" name="supplier" placeholder="Supplier" onChange={handleChange} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" /><input type="text" name="purchaser" placeholder="Purchaser (e.g., SENDIRI)" value={formData.purchaser} onChange={handleChange} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" /></div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4"><input type="text" name="purchaseAccount" placeholder="Purchase Account (e.g., BCA)" onChange={handleChange} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" /><select name="paidStatus" onChange={handleChange} value={formData.paidStatus} disabled={isPurchaserSendiri} className={`w-full p-3 bg-gray-700 rounded-md border border-gray-600 ${isPurchaserSendiri && 'opacity-50 cursor-not-allowed'}`}><option value="Unpaid">Unpaid</option><option value="Paid">Paid</option></select></div>
+                            <textarea name="notes" placeholder="Notes (optional)" onChange={handleChange} rows="2" className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"></textarea>
+                           
+                             <div className="flex justify-end space-x-4 pt-4 flex-shrink-0">
+                                <button type="button" onClick={closeModal} className="px-6 py-2 rounded-md bg-gray-600 hover:bg-gray-500 transition">Cancel</button>
+                                <button type="submit" disabled={isSubmitting} className="px-6 py-2 rounded-md bg-blue-600 hover:bg-blue-700 transition disabled:bg-blue-800 disabled:cursor-not-allowed"> {isSubmitting ? 'Submitting...' : 'Add Item(s)'} </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        }
+
+        function EditStockModal({ item, closeModal, userId, phoneData }) {
+            const [formData, setFormData] = useState({ ...item });
+            const [priceDisplay, setPriceDisplay] = useState('');
+            const [soldPriceDisplay, setSoldPriceDisplay] = useState('');
+            const [isSubmitting, setIsSubmitting] = useState(false);
+            const [isManual, setIsManual] = useState(!Object.keys(phoneData).includes(item.phoneModel));
+
+            useEffect(() => { 
+                let initialFormData = { ...item };
+                initialFormData.deliveryDate = timestampToISODate(item.deliveryDate);
+                if (isManual) {
+                    initialFormData.manualPhoneModel = item.phoneModel;
+                    initialFormData.phoneModel = 'manual';
+                }
+
+                setFormData(initialFormData);
+                setPriceDisplay(formatNumberInput(item.price));
+                setSoldPriceDisplay(formatNumberInput(item.soldPrice));
+            }, [item, isManual, phoneData]);
+
+            const handleNumberInputChange = (e) => {
+                const { name, value } = e.target;
+                const displayValue = formatNumberInput(value);
+                const rawValue = parseFormattedNumber(value);
+                
+                if (name === 'price') {
+                    setPriceDisplay(displayValue);
+                } else if (name === 'soldPrice') {
+                    setSoldPriceDisplay(displayValue);
+                }
+                
+                setFormData(prev => ({ ...prev, [name]: rawValue }));
+            };
+
+            const handleChange = (e) => {
+                const { name, value } = e.target;
+                if (name === 'purchaser') { 
+                    setFormData(prev => ({ ...prev, purchaser: value, paidStatus: value.toUpperCase() === 'SENDIRI' ? 'Paid' : 'Unpaid' })); 
+                    return; 
+                }
+                
+                if (name === 'phoneModel' && value === 'manual') {
+                    setIsManual(true);
+                    setFormData(prev => ({ ...prev, phoneModel: value, manualPhoneModel: '', storage: '', color: '', ram: '' }));
+                    return;
+                }
+
+                if (name === 'phoneModel' && isManual) {
+                    setIsManual(false);
+                }
+
+                setFormData(prev => ({ ...prev, [name]: value }));
+                
+                if (name === "phoneModel" && value !== 'manual') {
+                    setFormData(prev => ({ ...prev, storage: '', color: '', ram: '' }));
+                }
+            };
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if(!db || isSubmitting) return;
+                setIsSubmitting(true);
+                
+                let itemToUpdate = { ...formData };
+                
+                if (itemToUpdate.phoneModel === 'manual') {
+                    itemToUpdate.phoneModel = itemToUpdate.manualPhoneModel;
+                }
+                delete itemToUpdate.manualPhoneModel;
+
+                const price = parseFloat(itemToUpdate.price) || 0;
+                const discount = parseFloat(itemToUpdate.discount) || 0;
+                itemToUpdate.hpp = price - (price * (discount / 100));
+
+                if (itemToUpdate.availability === 'SOLD' && itemToUpdate.soldPrice) {
+                    itemToUpdate.profit = (parseFloat(itemToUpdate.soldPrice) || 0) - itemToUpdate.hpp;
+                } else {
+                    itemToUpdate.profit = null;
+                    itemToUpdate.soldPrice = null;
+                    itemToUpdate.customer = '';
+                }
+
+                if (typeof itemToUpdate.deliveryDate === 'string') {
+                    itemToUpdate.deliveryDate = window.firebase.Timestamp.fromDate(new Date(itemToUpdate.deliveryDate));
+                }
+                
+                const { id, ...finalUpdateData } = itemToUpdate;
+
+                try {
+                    const docRef = window.firebase.doc(db, 'artifacts', appId, 'users', userId, 'stock', item.id);
+                    await window.firebase.updateDoc(docRef, finalUpdateData);
+                    closeModal();
+                } catch (error) { 
+                    console.error("Error updating document:", error); 
+                    alert("Error updating data. Please try again.");
+                } finally { 
+                    setIsSubmitting(false); 
+                }
+            };
+            
+            const isPurchaserSendiri = formData.purchaser?.toUpperCase() === 'SENDIRI';
+            const selectedModelData = phoneData[formData.phoneModel] || {};
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-60 p-4"><div className="bg-gray-800 rounded-lg shadow-xl p-8 w-full max-w-2xl max-h-full overflow-y-auto text-white">
+                    <h3 className="text-2xl font-bold mb-6">Edit Inventory Item</h3>
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <select name="phoneModel" onChange={handleChange} value={formData.phoneModel} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600">
+                            <option value="">Select Phone Model</option>
+                            {Object.keys(phoneData).sort().map(model => <option key={model} value={model}>{model}</option>)}
+                            <option value="manual">-- Manual Input --</option>
+                        </select>
+
+                        {isManual ? (
+                            <input type="text" name="manualPhoneModel" placeholder="Enter Phone Model" onChange={handleChange} value={formData.manualPhoneModel || ''} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600 mt-4" />
+                        ) : null}
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {isManual ? (
+                                <input type="text" name="storage" placeholder="Storage" value={formData.storage || ''} onChange={handleChange} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" />
+                            ) : (
+                                <select name="storage" onChange={handleChange} value={formData.storage || ''} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600">
+                                    <option value="">Select Storage</option>
+                                    {selectedModelData.storage?.map(s => <option key={s} value={s}>{s}</option>)}
+                                </select>
+                            )}
+
+                            {isManual ? (
+                                <input type="text" name="color" placeholder="Color" value={formData.color || ''} onChange={handleChange} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" />
+                            ) : (
+                                <select name="color" onChange={handleChange} value={formData.color || ''} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600">
+                                    <option value="">Select Color</option>
+                                    {selectedModelData.colors?.map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                            )}
+                            
+                            { (isManual || (selectedModelData.ram && selectedModelData.ram.length > 0)) && (
+                                isManual ? (
+                                     <input type="text" name="ram" placeholder="RAM" value={formData.ram || ''} onChange={handleChange} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" />
+                                ) : (
+                                     <select name="ram" onChange={handleChange} value={formData.ram || ''} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600">
+                                        <option value="">Select RAM</option>
+                                        {selectedModelData.ram.map(r => <option key={r} value={r}>{r}</option>)}
+                                    </select>
+                                )
+                            )}
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <input type="text" name="imei" placeholder="IMEI" value={formData.imei || ''} onChange={handleChange} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" />
+                            <input type="text" name="invoice" placeholder="Invoice Number" value={formData.invoice || ''} onChange={handleChange} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"/>
+                        </div>
+                        <div>
+                            <label className="text-sm text-gray-400">Delivery Date</label>
+                            <input type="date" name="deliveryDate" value={formData.deliveryDate || ''} onChange={handleChange} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"/>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <input type="text" name="price" placeholder="Price (IDR)" value={priceDisplay} onChange={handleNumberInputChange} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"/>
+                            <input type="number" name="discount" placeholder="Discount (%)" value={formData.discount || ''} onChange={handleChange} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"/>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4"><input type="text" name="supplier" placeholder="Supplier" value={formData.supplier || ''} onChange={handleChange} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"/><input type="text" name="purchaser" placeholder="Purchaser (e.g., SENDIRI)" value={formData.purchaser || ''} onChange={handleChange} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"/></div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4"><input type="text" name="purchaseAccount" placeholder="Purchase Account (e.g., BCA)" value={formData.purchaseAccount || ''} onChange={handleChange} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"/><select name="paidStatus" onChange={handleChange} value={formData.paidStatus} disabled={isPurchaserSendiri} className={`w-full p-3 bg-gray-700 rounded-md border border-gray-600 ${isPurchaserSendiri && 'opacity-50 cursor-not-allowed'}`}><option value="Unpaid">Unpaid</option><option value="Paid">Paid</option></select></div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <select name="availability" onChange={handleChange} value={formData.availability} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600">
+                                <option value="Available">Available</option>
+                                <option value="SOLD">SOLD</option>
+                            </select>
+                            {formData.availability === 'SOLD' && (
+                                <input
+                                    type="text"
+                                    name="soldPrice"
+                                    placeholder="Sold Price (IDR)"
+                                    value={soldPriceDisplay}
+                                    onChange={handleNumberInputChange}
+                                    className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"
+                                />
+                            )}
+                        </div>
+                        {formData.availability === 'SOLD' && <input type="text" name="customer" placeholder="Customer Name" value={formData.customer || ''} onChange={handleChange} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"/>}
+                        <textarea name="notes" placeholder="Notes (optional)" value={formData.notes || ''} onChange={handleChange} rows="2" className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"></textarea>
+                        <div className="flex justify-end space-x-4 pt-4"><button type="button" onClick={closeModal} className="px-6 py-2 rounded-md bg-gray-600 hover:bg-gray-500 transition">Cancel</button><button type="submit" disabled={isSubmitting} className="px-6 py-2 rounded-md bg-yellow-600 hover:bg-yellow-700 transition disabled:bg-yellow-800 disabled:cursor-not-allowed"> {isSubmitting ? 'Updating...' : 'Update Item'} </button></div>
+                    </form>
+                </div></div>
+            )
+        }
+        
+        function ConfirmDeleteModal({ onConfirm, onCancel, item, title }) {
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-60 p-4">
+                    <div className="bg-gray-800 rounded-lg shadow-xl p-8 w-full max-w-md text-white">
+                        <h3 className="text-xl font-bold mb-4">{title}</h3>
+                        <p className="text-gray-300 mb-2">Are you sure you want to delete this?</p>
+                        <div className="bg-gray-700 p-3 rounded-md mb-6">
+                            {item.phoneModel && <p className="font-semibold">{item.phoneModel} {item.storage}</p>}
+                            {item.imei && <p className="text-sm text-gray-400">IMEI: {item.imei}</p>}
+                            {item.invoiceNumber && <p className="font-semibold">Invoice: {item.invoiceNumber}</p>}
+                            {item.customerName && <p className="text-sm text-gray-400">Customer: {item.customerName}</p>}
+                        </div>
+                        <div className="flex justify-end space-x-4">
+                            <button onClick={onCancel} className="px-6 py-2 rounded-md bg-gray-600 hover:bg-gray-500 transition">Cancel</button>
+                            <button onClick={onConfirm} className="px-6 py-2 rounded-md bg-red-600 hover:bg-red-700 transition">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            )
+        }
+
+        const generateOutput = async (element, format, filename) => {
+            if (!element) return;
+            // Temporarily set a fixed scale for generation to ensure quality
+            element.style.transform = 'scale(1)';
+
+            const canvas = await html2canvas(element, { 
+                width: element.offsetWidth,
+                height: element.offsetHeight,
+                scale: 2, 
+                useCORS: true,
+                backgroundColor: '#ffffff'
+            });
+            
+            // Restore dynamic scaling after generation
+            element.style.transform = '';
+
+            if (format === 'pdf') {
+                const { jsPDF } = window.jspdf;
+                const imgData = canvas.toDataURL('image/png');
+                const pdf = new jsPDF('p', 'mm', 'a4');
+                const pdfWidth = pdf.internal.pageSize.getWidth();
+                const pdfHeight = pdf.internal.pageSize.getHeight();
+                pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+                pdf.save(`${filename}.pdf`);
+            } else if (format === 'jpg') {
+                const link = document.createElement('a');
+                link.href = canvas.toDataURL('image/jpeg', 0.9);
+                link.download = `${filename}.jpg`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        };
+
+
+        function SalesInvoiceModal({ stock, closeModal, userId }) {
+            const [customerName, setCustomerName] = useState('');
+            const [customerPhone, setCustomerPhone] = useState('');
+            const [paymentTerms, setPaymentTerms] = useState('');
+            const [paymentStatus, setPaymentStatus] = useState('Lunas');
+            const [discount, setDiscount] = useState(0);
+            const [discountDisplay, setDiscountDisplay] = useState('');
+            const [otherCosts, setOtherCosts] = useState(0);
+            const [otherCostsDisplay, setOtherCostsDisplay] = useState('');
+            const [costInputType, setCostInputType] = useState('dropdown');
+            const [costDescription, setCostDescription] = useState('Ongkos Kirim');
+            const [manualCostDescription, setManualCostDescription] = useState('');
+            const [selectedItems, setSelectedItems] = useState([]);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [view, setView] = useState('form');
+            const [invoicePreviewData, setInvoicePreviewData] = useState(null);
+            const [isGenerating, setIsGenerating] = useState(false);
+            const previewRef = useRef(null);
+            const [savedInvoiceId, setSavedInvoiceId] = useState(null);
+            
+            const PREDEFINED_COSTS = ['Ongkos Kirim', 'Biaya Admin', 'Biaya Packing'];
+
+            const availableStock = useMemo(() => stock.filter(item => {
+                if (item.availability !== 'Available') return false;
+                const searchLower = searchTerm.toLowerCase();
+                const searchMatch = searchTerm ? (
+                    item.phoneModel?.toLowerCase().includes(searchLower) || 
+                    item.imei?.toLowerCase().includes(searchLower) ||
+                    item.storage?.toLowerCase().includes(searchLower) ||
+                    item.color?.toLowerCase().includes(searchLower)
+                ) : true;
+                return searchMatch;
+            }), [stock, searchTerm]);
+            
+            const groupedSelectedItems = useMemo(() => {
+                return selectedItems.reduce((acc, item) => {
+                    const key = `${item.phoneModel}-${item.storage}-${item.color}`;
+                    if (!acc[key]) {
+                        acc[key] = {
+                            details: { phoneModel: item.phoneModel, storage: item.storage, color: item.color },
+                            items: [],
+                            soldPrice: item.soldPrice
+                        };
+                    }
+                    acc[key].items.push(item);
+                    return acc;
+                }, {});
+            }, [selectedItems]);
+
+
+            const toggleItemSelection = (item) => {
+                setSelectedItems(prev => {
+                    const isSelected = prev.some(i => i.id === item.id);
+                    if (isSelected) {
+                        return prev.filter(i => i.id !== item.id);
+                    } else {
+                        const groupKey = `${item.phoneModel}-${item.storage}-${item.color}`;
+                        const existingGroupItems = prev.filter(i => `${i.phoneModel}-${i.storage}-${i.color}` === groupKey);
+                        const price = existingGroupItems.length > 0 ? existingGroupItems[0].soldPrice : item.price;
+                        return [...prev, { ...item, soldPrice: price }];
+                    }
+                });
+            };
+            
+            const deselectOneFromGroup = (groupKey) => {
+                setSelectedItems(prev => {
+                    const itemToRemove = prev.find(i => `${i.phoneModel}-${i.storage}-${i.color}` === groupKey);
+                    if (itemToRemove) {
+                        return prev.filter(i => i.id !== itemToRemove.id);
+                    }
+                    return prev;
+                });
+            };
+
+            const handleGroupSoldPriceChange = (groupKey, newPrice) => {
+                const rawPrice = parseFormattedNumber(newPrice);
+                setSelectedItems(prev => prev.map(item => {
+                    const currentKey = `${item.phoneModel}-${item.storage}-${item.color}`;
+                    if (currentKey === groupKey) {
+                        return { ...item, soldPrice: rawPrice };
+                    }
+                    return item;
+                }));
+            };
+
+            const handleDiscountChange = (e) => {
+                const displayValue = formatNumberInput(e.target.value);
+                const rawValue = parseFormattedNumber(e.target.value);
+                setDiscountDisplay(displayValue);
+                setDiscount(rawValue);
+            };
+
+            const handleOtherCostsChange = (e) => {
+                const displayValue = formatNumberInput(e.target.value);
+                const rawValue = parseFormattedNumber(e.target.value);
+                setOtherCostsDisplay(displayValue);
+                setOtherCosts(rawValue);
+            };
+
+            const handlePreview = async () => {
+                if (!customerName || !paymentTerms || selectedItems.length === 0) { alert("Silakan isi nama pelanggan, termin pembayaran, dan pilih minimal satu barang."); return; }
+                const today = new Date();
+                const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+                const invoicesCollectionRef = window.firebase.collection(db, 'artifacts', appId, 'users', userId, 'invoices');
+                const q = window.firebase.query(invoicesCollectionRef, window.firebase.where('date', '>=', window.firebase.Timestamp.fromDate(startOfDay)));
+                const querySnapshot = await window.firebase.getDocs(q);
+                const todaysInvoiceCount = querySnapshot.size;
+                const dateString = new Date().toLocaleDateString('fr-CA').replace(/-/g, '').slice(2);
+                
+                const subTotal = selectedItems.reduce((acc, i) => acc + i.soldPrice, 0);
+                const total = subTotal - discount + otherCosts;
+                const finalCostDescription = costInputType === 'manual' ? manualCostDescription : costDescription;
+
+                const data = {
+                    invoiceNumber: `${paymentTerms.toUpperCase()}/${dateString}/${todaysInvoiceCount + 1}`,
+                    customerName, customerPhone, paymentTerms, paymentStatus,
+                    date: window.firebase.Timestamp.fromDate(new Date()),
+                    items: selectedItems,
+                    subTotal: subTotal,
+                    discount: discount,
+                    otherCosts: otherCosts,
+                    costDescription: finalCostDescription,
+                    total: total,
+                };
+                setInvoicePreviewData(data);
+                setView('preview');
+            };
+
+            const confirmAndSaveInvoice = async (dataToSave) => {
+                if (savedInvoiceId) return savedInvoiceId; // Already saved, return existing ID
+                if(!db || !dataToSave) return null;
+                
+                try {
+                    const stockItemIds = dataToSave.items.map(item => item.id);
+                    const batch = window.firebase.writeBatch(db);
+
+                    // Update stock items
+                    for (const item of dataToSave.items) {
+                        const stockDocRef = window.firebase.doc(db, 'artifacts', appId, 'users', userId, 'stock', item.id);
+                        batch.update(stockDocRef, { availability: 'SOLD', customer: dataToSave.customerName, soldPrice: item.soldPrice, profit: item.soldPrice - item.hpp });
+                    }
+                    
+                    // Create new invoice document
+                    const invoicesCollectionRef = window.firebase.collection(db, 'artifacts', appId, 'users', userId, 'invoices');
+                    const newInvoiceRef = window.firebase.doc(invoicesCollectionRef);
+                    const sanitizedItems = dataToSave.items.map(({ id, phoneModel, storage, color, imei, soldPrice, hpp }) => ({ id, phoneModel, storage, color, imei, soldPrice, hpp }));
+                    const finalInvoiceData = { ...dataToSave, id: newInvoiceRef.id, stockItemIds, items: sanitizedItems };
+                    batch.set(newInvoiceRef, finalInvoiceData);
+                    
+                    await batch.commit();
+
+                    setSavedInvoiceId(newInvoiceRef.id); // Set the new invoice ID
+                    alert('Invoice berhasil disimpan!');
+                    return newInvoiceRef.id;
+                } catch (error) { 
+                    console.error("Error creating invoice: ", error);
+                    alert('Gagal menyimpan invoice.');
+                    return null;
+                }
+            };
+
+            const handleGenerate = async (format) => {
+                if (isGenerating || !previewRef.current) return;
+                setIsGenerating(true);
+                
+                const invoiceId = await confirmAndSaveInvoice(invoicePreviewData);
+                
+                if (invoiceId) { // Proceed only if invoice was saved successfully
+                    await generateOutput(previewRef.current, format, `Invoice-${invoicePreviewData.invoiceNumber.replace(/\//g, '-')}`);
+                }
+                setIsGenerating(false);
+            };
+            
+            useEffect(() => {
+                if (view === 'preview' && previewRef.current) {
+                    const container = previewRef.current.parentElement;
+                    const updateScale = () => {
+                        if (container && previewRef.current) {
+                             // Use offsetWidth for actual rendered width
+                            const scale = container.offsetWidth / previewRef.current.offsetWidth;
+                            previewRef.current.style.setProperty('--preview-scale', scale);
+                        }
+                    };
+                    
+                    // Run once to set initial scale, then on resize
+                    updateScale();
+                    window.addEventListener('resize', updateScale);
+                    
+                    return () => window.removeEventListener('resize', updateScale);
+                }
+            }, [view, invoicePreviewData]); // Rerun when preview is shown
+
+
+            if (view === 'preview') {
+                const { subTotal, total, paymentStatus, discount, otherCosts, costDescription } = invoicePreviewData;
+                const amountPaid = paymentStatus === 'Lunas' ? total : 0;
+                const balanceDue = paymentStatus === 'Lunas' ? 0 : total;
+
+                return (
+                    <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-[999] p-4">
+                        <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-5xl max-h-full flex flex-col text-sm text-white">
+                            <div className="p-4 sm:p-6 border-b border-gray-700 flex flex-wrap justify-between items-center gap-2">
+                                <h3 className="text-xl sm:text-2xl font-bold">Invoice Preview</h3>
+                                <div className="flex gap-2 flex-wrap justify-center sm:justify-end w-full sm:w-auto">
+                                    <button onClick={() => { setView('form'); setSavedInvoiceId(null); }} className="px-4 py-2 rounded-md bg-gray-600 hover:bg-gray-500 transition text-xs sm:text-sm" disabled={isGenerating}>Back to Edit</button>
+                                    <button onClick={() => confirmAndSaveInvoice(invoicePreviewData)} className="px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-700 transition text-xs sm:text-sm" disabled={isGenerating || savedInvoiceId}>
+                                        {savedInvoiceId ? 'Saved' : 'Save Invoice'}
+                                    </button>
+                                    <button onClick={() => handleGenerate('pdf')} className="px-4 py-2 rounded-md bg-green-600 hover:bg-green-700 transition text-xs sm:text-sm" disabled={isGenerating}>
+                                        {isGenerating ? 'Generating...' : 'Generate PDF'}
+                                    </button>
+                                     <button onClick={() => handleGenerate('jpg')} className="px-4 py-2 rounded-md bg-purple-600 hover:bg-purple-700 transition text-xs sm:text-sm" disabled={isGenerating}>
+                                        {isGenerating ? 'Generating...' : 'Generate JPG'}
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="flex-grow overflow-y-auto p-2 sm:p-6 flex justify-center bg-gray-900">
+                               <div className="preview-container">
+                                    <div ref={previewRef} className="preview-a4">
+                                         {invoicePreviewData.paymentStatus && (
+                                            <div className="watermark-container">
+                                               <div className="watermark">{invoicePreviewData.paymentStatus.toUpperCase()}</div>
+                                            </div>
+                                        )}
+                                        <div className="relative z-20 flex flex-col h-full">
+                                            <div className="flex justify-between items-start mb-4"><img src={logoBase64} alt="Griphub Logo" className="h-20 w-20"/><div className="text-right"><h4 className="text-4xl font-bold">INVOICE</h4><p className="text-sm">#{invoicePreviewData.invoiceNumber}</p></div></div>
+                                            <div className="flex justify-between mb-8 text-xs">
+                                                <div><p className="font-bold">Griphub Ponsel</p><p>NIB 2805240102495</p><p>Jl. Rawabelong Raya No.12</p><p>Palmerah, Jakarta Barat 11480</p></div>
+                                                <table className="text-right"><tbody>
+                                                    <tr><td className="font-bold pr-2 text-left">Date:</td><td>{formatDate(invoicePreviewData.date)}</td></tr>
+                                                    <tr><td className="font-bold pr-2 text-left">Payment Terms:</td><td>{invoicePreviewData.paymentTerms}</td></tr>
+                                                    <tr><td className="font-bold pr-2 text-left">Balance Due:</td><td className="font-bold">{formatRupiahDisplay(balanceDue)}</td></tr>
+                                                </tbody></table>
+                                            </div>
+                                            <div className="mb-6"><p className="font-bold">Bill To:</p><p>{invoicePreviewData.customerName}</p><p>{invoicePreviewData.customerPhone}</p></div>
+                                            <table className="w-full text-left text-xs">
+                                                <thead className="bg-black text-white"><tr><th className="p-2 font-bold">Item</th><th className="p-2 font-bold text-right">Qty</th><th className="p-2 font-bold text-right">Rate</th><th className="p-2 font-bold text-right">Amount</th></tr></thead>
+                                                <tbody>
+                                                    {Object.values(invoicePreviewData.items.reduce((acc, item) => {
+                                                        const key = `${item.phoneModel} ${item.storage} ${item.color}`;
+                                                        if (!acc[key]) acc[key] = { ...item, imeis: [], quantity: 0, totalAmount: 0 };
+                                                        acc[key].imeis.push(item.imei); acc[key].quantity += 1; acc[key].totalAmount += item.soldPrice;
+                                                        return acc;
+                                                    }, {})).map((group, idx) => ( <tr key={idx} className="border-b"><td className="p-2 align-top">{group.phoneModel} {group.storage} {group.color}<br/><span className="text-gray-600">{group.imeis.join(', ')}</span></td><td className="p-2 align-top text-right">{group.quantity}</td><td className="p-2 align-top text-right">{formatRupiahDisplay(group.soldPrice)}</td><td className="p-2 align-top text-right">{formatRupiahDisplay(group.totalAmount)}</td></tr> ))}
+                                                </tbody>
+                                            </table>
+                                            <div className="flex justify-between pt-20 text-xs">
+                                                <div><p className="font-bold">Notes:</p><p>Kontak Griphub Ponsel : 08995071749</p><p className="font-bold mt-2">Warranty:</p><p>Garansi Resmi Indonesia 1 Tahun</p></div>
+                                                <div className="w-2/5">
+                                                    <div className="flex justify-between"><span>Subtotal:</span><span>{formatRupiahDisplay(subTotal)}</span></div>
+                                                    {discount > 0 && <div className="flex justify-between"><span>Discount:</span><span>- {formatRupiahDisplay(discount)}</span></div>}
+                                                    {otherCosts > 0 && <div className="flex justify-between"><span>{costDescription || 'Biaya Lainnya'}:</span><span>{formatRupiahDisplay(otherCosts)}</span></div>}
+                                                    <div className="flex justify-between mt-1 pt-1 border-t font-bold text-sm"><span>Total:</span><span>{formatRupiahDisplay(total)}</span></div>
+                                                    <div className="flex justify-between"><span>Amount Paid:</span><span>{formatRupiahDisplay(amountPaid)}</span></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-[999] p-4"><div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-4xl max-h-full flex flex-col text-white">
+                    <h3 className="text-2xl font-bold p-6 border-b border-gray-700">Create Sales Invoice</h3>
+                    <div className="flex-grow overflow-y-auto p-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <input type="text" placeholder="Customer Name" value={customerName} onChange={e => setCustomerName(e.target.value)} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"/>
+                            <input type="text" placeholder="Customer Phone" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"/>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                            <input type="text" placeholder="Payment Terms (e.g., BCA, Cash)" value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"/>
+                             <select value={paymentStatus} onChange={e => setPaymentStatus(e.target.value)} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600">
+                                <option value="Lunas">Lunas</option>
+                                <option value="Belum Lunas">Belum Lunas</option>
+                            </select>
+                             <input type="text" placeholder="Discount (IDR)" value={discountDisplay} onChange={handleDiscountChange} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"/>
+                        </div>
+                        
+                        <div className="border-t border-gray-700 pt-4 mt-4">
+                             <h4 className="text-lg font-semibold mb-2">Biaya Tambahan</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4 items-center">
+                                <select value={costInputType} onChange={(e) => setCostInputType(e.target.value)} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600">
+                                    <option value="dropdown">Pilih Jenis Biaya</option>
+                                    <option value="manual">Ketik Manual</option>
+                                </select>
+
+                                {costInputType === 'dropdown' ? (
+                                    <select value={costDescription} onChange={(e) => setCostDescription(e.target.value)} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600">
+                                        {PREDEFINED_COSTS.map(cost => <option key={cost} value={cost}>{cost}</option>)}
+                                    </select>
+                                ) : (
+                                    <input 
+                                        type="text" 
+                                        placeholder="Keterangan Biaya" 
+                                        value={manualCostDescription} 
+                                        onChange={(e) => setManualCostDescription(e.target.value)} 
+                                        className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"
+                                    />
+                                )}
+                                
+                                <input 
+                                    type="text" 
+                                    placeholder="Nominal Biaya (IDR)" 
+                                    value={otherCostsDisplay} 
+                                    onChange={handleOtherCostsChange} 
+                                    className="w-full p-3 bg-gray-700 rounded-md border border-gray-600"
+                                />
+                            </div>
+                        </div>
+
+
+                        <h4 className="text-lg font-semibold mb-2 pt-4 border-t border-gray-700 mt-4">Select Items from Stock</h4>
+                        <input type="text" placeholder="Search available stock by model, IMEI, storage, color..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600 mb-4" />
+                        <div className="overflow-y-auto border border-gray-700 rounded-lg p-2 mb-4 h-48">
+                            {availableStock.length > 0 ? availableStock.map(item => ( <div key={item.id} className={`p-3 rounded-lg mb-2 flex justify-between items-center cursor-pointer transition ${selectedItems.find(i => i.id === item.id) ? 'bg-green-800' : 'bg-gray-700 hover:bg-gray-600'}`} onClick={() => toggleItemSelection(item)}><div><p className="font-bold">{item.phoneModel} {item.storage} {item.color}</p><p className="text-sm text-gray-400">IMEI: {item.imei} | Price: {formatRupiahDisplay(item.price)}</p></div><div className="w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all duration-300" style={{borderColor: selectedItems.find(i => i.id === item.id) ? '#10B981' : '#9CA3AF'}}>{selectedItems.find(i => i.id === item.id) && <div className="w-3 h-3 bg-green-500 rounded-full"></div>}</div></div> )) : <p className="text-gray-400 text-center py-4">No items available in stock.</p>}
+                        </div>
+                        {selectedItems.length > 0 && (<div className="mb-4"><h4 className="text-lg font-semibold mb-2">Selected Items</h4><div className="overflow-y-auto h-32 pr-2">{Object.entries(groupedSelectedItems).map(([key, group]) => (<div key={key} className="flex items-center justify-between bg-gray-700 p-2 rounded-md mb-2"><div><p>{group.details.phoneModel} {group.details.storage} {group.details.color}</p><div className="flex items-center gap-2"><p className="text-sm text-gray-400">Qty: {group.items.length}</p><button onClick={() => deselectOneFromGroup(key)} className="text-red-400 hover:text-red-300 text-xs">(Deselect One)</button></div></div><input type="text" value={formatNumberInput(group.soldPrice)} onChange={(e) => handleGroupSoldPriceChange(key, e.target.value)} className="w-40 p-2 bg-gray-600 rounded-md border border-gray-500" placeholder="Sold Price"/></div>))}</div></div>)}
+                    </div>
+                    <div className="p-4 bg-gray-800 border-t border-gray-700 flex justify-end space-x-4"><button type="button" onClick={closeModal} className="px-6 py-2 rounded-md bg-gray-600 hover:bg-gray-500 transition">Cancel</button><button onClick={handlePreview} className="px-6 py-2 rounded-md bg-green-600 hover:bg-green-700 transition" disabled={selectedItems.length === 0}>Preview Invoice</button></div>
+                </div></div>
+            );
+        }
+
+        function EditInvoiceStatusModal({ invoice, closeModal, userId }) {
+            const [status, setStatus] = useState(invoice.paymentStatus || 'Lunas');
+            const [isSubmitting, setIsSubmitting] = useState(false);
+
+            const handleSave = async () => {
+                if (!userId || !invoice.id || isSubmitting) return;
+                setIsSubmitting(true);
+                try {
+                    const invoiceDocRef = window.firebase.doc(db, 'artifacts', appId, 'users', userId, 'invoices', invoice.id);
+                    await window.firebase.updateDoc(invoiceDocRef, { paymentStatus: status });
+                    closeModal();
+                } catch (error) {
+                    console.error("Error updating invoice status:", error);
+                    alert("Failed to update status.");
+                } finally {
+                    setIsSubmitting(false);
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-60 p-4">
+                    <div className="bg-gray-800 rounded-lg shadow-xl p-8 w-full max-w-md text-white">
+                        <h3 className="text-xl font-bold mb-4">Edit Payment Status</h3>
+                        <p className="text-gray-300 mb-2">Invoice: <span className="font-semibold">{invoice.invoiceNumber}</span></p>
+                        <div className="my-4">
+                            <label htmlFor="status-select" className="block text-sm font-medium text-gray-300 mb-2">Status</label>
+                            <select id="status-select" value={status} onChange={(e) => setStatus(e.target.value)} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600">
+                                <option value="Lunas">Lunas</option>
+                                <option value="Belum Lunas">Belum Lunas</option>
+                            </select>
+                        </div>
+                        <div className="flex justify-end space-x-4 pt-4">
+                            <button onClick={closeModal} className="px-6 py-2 rounded-md bg-gray-600 hover:bg-gray-500 transition">Cancel</button>
+                            <button onClick={handleSave} disabled={isSubmitting} className="px-6 py-2 rounded-md bg-blue-600 hover:bg-blue-700 transition disabled:bg-blue-800 disabled:cursor-not-allowed">
+                                {isSubmitting ? 'Saving...' : 'Save'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function InvoiceListPage({ userId }) {
+            const [invoices, setInvoices] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [itemToDelete, setItemToDelete] = useState(null);
+            const [editingInvoice, setEditingInvoice] = useState(null);
+
+            useEffect(() => {
+                if (!userId || !db) return;
+                const invoicesCollectionRef = window.firebase.collection(db, 'artifacts', appId, 'users', userId, 'invoices');
+                const q = window.firebase.query(invoicesCollectionRef, window.firebase.orderBy('date', 'desc'));
+                const unsubscribe = window.firebase.onSnapshot(q, (snapshot) => {
+                    const invoicesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setInvoices(invoicesData); setLoading(false);
+                }, (error) => { console.error("Error fetching invoices:", error); setLoading(false); });
+                return () => unsubscribe();
+            }, [userId]);
+            
+            const handleDeleteInvoice = async () => {
+                if (!itemToDelete || !userId) return;
+                try {
+                    const batch = window.firebase.writeBatch(db);
+                    
+                    if (itemToDelete.stockItemIds && Array.isArray(itemToDelete.stockItemIds)) {
+                        for (const stockId of itemToDelete.stockItemIds) {
+                            const stockDocRef = window.firebase.doc(db, 'artifacts', appId, 'users', userId, 'stock', stockId);
+                            batch.update(stockDocRef, { availability: 'Available', customer: '', soldPrice: null, profit: null });
+                        }
+                    }
+                    const invoiceDocRef = window.firebase.doc(db, 'artifacts', appId, 'users', userId, 'invoices', itemToDelete.id);
+                    batch.delete(invoiceDocRef);
+                    await batch.commit();
+                    setItemToDelete(null);
+                } catch (error) { console.error("Error deleting invoice and updating stock:", error); alert("Error deleting invoice.")}
+            };
+
+            const renderAndAct = (invoice, action) => {
+                const container = document.getElementById('print-root');
+                if (!container) return;
+
+                const PrintComponent = () => (
+                    <div className="print-area">
+                        <InvoicePreviewForGeneration invoiceData={invoice} />
+                    </div>
+                );
+                
+                container.classList.remove('hidden');
+                ReactDOM.render(<PrintComponent />, container, async () => {
+                    if (action === 'print') {
+                        window.print();
+                    } else if (action === 'download') {
+                        const elementToCapture = container.querySelector('.preview-a4');
+                        if(elementToCapture) {
+                           await generateOutput(elementToCapture, 'pdf', `Invoice-${invoice.invoiceNumber.replace(/\//g, '-')}`);
+                        }
+                    }
+                    ReactDOM.unmountComponentAtNode(container);
+                    container.classList.add('hidden');
+                });
+            };
+
+            const handleShareToWhatsApp = (invoice) => {
+                if (!invoice.customerPhone) {
+                    alert("Customer phone number is not available for this invoice.");
+                    return;
+                }
+                let cleanPhone = invoice.customerPhone.replace(/\D/g, '');
+                if (cleanPhone.startsWith('0')) {
+                    cleanPhone = '62' + cleanPhone.substring(1);
+                } else if (!cleanPhone.startsWith('62')) {
+                    cleanPhone = '62' + cleanPhone;
+                }
+                const message = `Halo ${invoice.customerName},\n\nBerikut adalah detail invoice Anda:\nNomor: *${invoice.invoiceNumber}*\nTotal: *${formatRupiahDisplay(invoice.total)}*\nStatus: *${invoice.paymentStatus || 'Lunas'}*\n\nTerima kasih atas pembelian Anda di Griphub Ponsel! Mohon lampirkan bukti transfer jika pembayaran melalui transfer.\n\n(File PDF invoice ini dapat Anda unduh dan lampirkan secara manual di chat ini)`;
+                const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+                window.open(url, '_blank');
+            };
+
+            return (
+                <div className="container mx-auto">
+                    {itemToDelete && <ConfirmDeleteModal title="Delete Invoice" onConfirm={handleDeleteInvoice} onCancel={() => setItemToDelete(null)} item={itemToDelete} />}
+                    {editingInvoice && <EditInvoiceStatusModal invoice={editingInvoice} closeModal={() => setEditingInvoice(null)} userId={userId} />}
+                    <h2 className="text-3xl font-bold text-white mb-6">Invoice List</h2>
+                        <div className="bg-gray-800 shadow-2xl rounded-lg overflow-x-auto">
+                            {loading ? <div className="text-center p-10 text-white">Loading invoices...</div> : invoices.length > 0 ? (
+                            <table className="min-w-full divide-y divide-gray-700 text-white">
+                                <thead className="bg-gray-700"><tr>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">No</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Date</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Invoice #</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Customer Name</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Total Amount</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Status</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Action</th>
+                                </tr></thead>
+                                <tbody className="bg-gray-800 divide-y divide-gray-700">
+                                    {invoices.map((invoice, index) => (
+                                        <tr key={invoice.id} className="hover:bg-gray-700 transition">
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm">{index + 1}</td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm">{formatDate(invoice.date)}</td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm">{invoice.invoiceNumber}</td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm font-semibold">{invoice.customerName}</td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm">{formatRupiahDisplay(invoice.total)}</td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm">
+                                                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${invoice.paymentStatus === 'Lunas' ? 'bg-green-200 text-green-800' : 'bg-yellow-200 text-yellow-800'}`}>
+                                                    {invoice.paymentStatus || 'Lunas'}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm">
+                                                <div className="flex items-center gap-4">
+                                                    <button onClick={() => renderAndAct(invoice, 'download')} className="text-sky-400 hover:text-sky-300" title="Download PDF">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+                                                    </button>
+                                                    <button onClick={() => renderAndAct(invoice, 'print')} className="text-blue-400 hover:text-blue-300" title="Print">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v6a2 2 0 002 2h1v-4a1 1 0 011-1h10a1 1 0 011 1v4h1a2 2 0 002-2v-6a2 2 0 00-2-2h-1V4a2 2 0 00-2-2H7a2 2 0 00-2 2zm8 0H7v3h6V4zm0 8H7v4h6v-4z" clipRule="evenodd" /></svg>
+                                                    </button>
+                                                    <button onClick={() => handleShareToWhatsApp(invoice)} className="text-green-400 hover:text-green-300" title="Share to WhatsApp">
+                                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a8 8 0 100 16 8 8 0 000-16zM2 10a8 8 0 1116 0 8 8 0 01-16 0zm12.5-2a.5.5 0 00-.5-.5h-1.5a.5.5 0 00-.5.5v3a.5.5 0 00.5.5h1.5a.5.5 0 00.5-.5v-3zM8.5 8a.5.5 0 00-.5-.5h-1.5a.5.5 0 000 1H8v.5a.5.5 0 00.5.5h.5a.5.5 0 00.5-.5V8zM6.5 13a.5.5 0 00-.5-.5H3a.5.5 0 00-.5.5v.5a.5.5 0 00.5.5h3a.5.5 0 00.5-.5v-.5z" /></svg>
+                                                    </button>
+                                                    <button onClick={() => setEditingInvoice(invoice)} className="text-yellow-400 hover:text-yellow-300" title="Edit Status">
+                                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" /></svg>
+                                                    </button>
+                                                    <button onClick={() => setItemToDelete(invoice)} className="text-red-500 hover:text-red-400" title="Delete">
+                                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                            ) : <div className="text-center p-10 text-white">No invoices found. Create one from the Stock List page.</div>}
+                        </div>
+                </div>
+            );
+        }
+        
+        const InvoicePreviewForGeneration = ({ invoiceData }) => {
+            const { subTotal = invoiceData.total, total, paymentStatus, discount = 0, otherCosts = 0, costDescription } = invoiceData;
+            const amountPaid = paymentStatus === 'Lunas' ? total : 0;
+            const balanceDue = paymentStatus === 'Lunas' ? 0 : total;
+
+            return (
+                <div className="preview-a4" style={{ transform: 'scale(1)' }}>
+                     {invoiceData.paymentStatus && (
+                        <div className="watermark-container">
+                           <div className="watermark">{invoiceData.paymentStatus.toUpperCase()}</div>
+                        </div>
+                    )}
+                    <div className="relative z-20 flex flex-col h-full text-gray-800">
+                        <div className="flex justify-between items-start mb-4"><img src={logoBase64} alt="Griphub Logo" className="h-20 w-20"/><div className="text-right"><h4 className="text-4xl font-bold">INVOICE</h4><p className="text-sm">#{invoiceData.invoiceNumber}</p></div></div>
+                        <div className="flex justify-between mb-8 text-xs">
+                            <div><p className="font-bold">Griphub Ponsel</p><p>NIB 2805240102495</p><p>Jl. Rawabelong Raya No.12</p><p>Palmerah, Jakarta Barat 11480</p></div>
+                            <table className="text-right"><tbody>
+                                <tr><td className="font-bold pr-2 text-left">Date:</td><td>{formatDate(invoiceData.date)}</td></tr>
+                                <tr><td className="font-bold pr-2 text-left">Payment Terms:</td><td>{invoiceData.paymentTerms}</td></tr>
+                                <tr><td className="font-bold pr-2 text-left">Balance Due:</td><td className="font-bold">{formatRupiahDisplay(balanceDue)}</td></tr>
+                            </tbody></table>
+                        </div>
+                        <div className="mb-6"><p className="font-bold">Bill To:</p><p>{invoiceData.customerName}</p><p>{invoiceData.customerPhone}</p></div>
+                        <table className="w-full text-left text-xs">
+                            <thead className="bg-black text-white"><tr><th className="p-2 font-bold">Item</th><th className="p-2 font-bold text-right">Qty</th><th className="p-2 font-bold text-right">Rate</th><th className="p-2 font-bold text-right">Amount</th></tr></thead>
+                            <tbody>
+                                {Object.values(invoiceData.items.reduce((acc, item) => {
+                                    const key = `${item.phoneModel} ${item.storage} ${item.color}`;
+                                    if (!acc[key]) acc[key] = { ...item, imeis: [], quantity: 0, totalAmount: 0 };
+                                    acc[key].imeis.push(item.imei); acc[key].quantity += 1; acc[key].totalAmount += item.soldPrice;
+                                    return acc;
+                                }, {})).map((group, idx) => ( <tr key={idx} className="border-b"><td className="p-2 align-top">{group.phoneModel} {group.storage} {group.color}<br/><span className="text-gray-600">{group.imeis.join(', ')}</span></td><td className="p-2 align-top text-right">{group.quantity}</td><td className="p-2 align-top text-right">{formatRupiahDisplay(group.soldPrice)}</td><td className="p-2 align-top text-right">{formatRupiahDisplay(group.totalAmount)}</td></tr> ))}
+                            </tbody>
+                        </table>
+                         <div className="flex justify-between mt-auto pt-4 text-xs">
+                            <div><p className="font-bold">Notes:</p><p>Kontak Griphub Ponsel : 08995071749</p><p className="font-bold mt-2">Warranty:</p><p>Garansi Resmi Indonesia 1 Tahun (PA/A, SA/A)</p></div>
+                            <div className="w-2/5">
+                                <div className="flex justify-between"><span>Subtotal:</span><span>{formatRupiahDisplay(subTotal)}</span></div>
+                                {discount > 0 && <div className="flex justify-between"><span>Discount:</span><span>- {formatRupiahDisplay(discount)}</span></div>}
+                                {otherCosts > 0 && <div className="flex justify-between"><span>{costDescription || 'Biaya Lainnya'}:</span><span>{formatRupiahDisplay(otherCosts)}</span></div>}
+                                <div className="flex justify-between mt-1 pt-1 border-t font-bold text-sm"><span>Total:</span><span>{formatRupiahDisplay(total)}</span></div>
+                                <div className="flex justify-between"><span>Amount Paid:</span><span>{formatRupiahDisplay(amountPaid)}</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )
+        };
+
+        function ModelPieChart({ chartData }) {
+            const chartRef = useRef(null);
+            const chartInstanceRef = useRef(null);
+
+            useEffect(() => {
+                if (!chartRef.current || typeof Chart === 'undefined') return;
+                const ctx = chartRef.current.getContext('2d');
+                
+                if (chartInstanceRef.current) {
+                    chartInstanceRef.current.destroy();
+                }
+
+                const labels = Object.keys(chartData);
+                const data = Object.values(chartData);
+
+                if (labels.length === 0) return; 
+
+                chartInstanceRef.current = new Chart(ctx, {
+                    type: 'pie',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Unit',
+                            data: data,
+                            backgroundColor: [
+                                '#60A5FA', '#34D399', '#FBBF24', '#F87171', '#A78BFA',
+                                '#F472B6', '#4ADE80', '#2DD4BF', '#F43F5E', '#818CF8'
+                            ],
+                            borderColor: '#374151',
+                            borderWidth: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                                labels: {
+                                    color: '#D1D5DB',
+                                    font: { size: 12 },
+                                    boxWidth: 15,
+                                    padding: 15
+                                }
+                            }
+                        }
+                    }
+                });
+
+                return () => {
+                    if (chartInstanceRef.current) {
+                        chartInstanceRef.current.destroy();
+                    }
+                };
+            }, [chartData]);
+
+            return (
+                <div className="relative h-96 w-full">
+                    <canvas ref={chartRef}></canvas>
+                </div>
+            );
+        }
+        
+        function UnitBreakdownCard({ data }) {
+            const [copyStatus, setCopyStatus] = useState('Copy');
+
+            const handleCopy = () => {
+                if (!data || data.length === 0) return;
+                const textToCopy = data.map(item => `${item.model} ${item.storage} ${item.color}: ${item.count} unit`).join('\n');
+                navigator.clipboard.writeText(textToCopy).then(() => {
+                    setCopyStatus('Copied!');
+                    setTimeout(() => setCopyStatus('Copy'), 2000);
+                }, (err) => {
+                    console.error('Could not copy text: ', err);
+                    setCopyStatus('Failed!');
+                    setTimeout(() => setCopyStatus('Copy'), 2000);
+                });
+            };
+
+            if (!data || data.length === 0) {
+                return (
+                     <div className="bg-gray-700 shadow-lg rounded-lg p-4">
+                        <h3 className="text-xl font-bold mb-4">Rincian Unit Tersedia</h3>
+                        <div className="text-center py-10 text-gray-400">Tidak ada stok tersedia untuk bulan ini.</div>
+                    </div>
+                )
+            }
+            return (
+                <div className="bg-gray-700 shadow-lg rounded-lg p-4">
+                     <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-xl font-bold">Rincian Unit Tersedia</h3>
+                        <button onClick={handleCopy} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded-lg text-sm transition">
+                            {copyStatus}
+                        </button>
+                    </div>
+                    <div className="overflow-y-auto max-h-96">
+                        <table className="min-w-full divide-y divide-gray-600">
+                             <thead className="bg-gray-600 sticky top-0">
+                                <tr>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Model & Varian</th>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Warna</th>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Jumlah Unit</th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-gray-700 divide-y divide-gray-600">
+                                {data.map((item, index) => (
+                                    <tr key={index} className="hover:bg-gray-600/50 transition">
+                                        <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">{item.model} {item.storage}</td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300">{item.color}</td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300">{item.count}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )
+        }
+
+        function FinancialReportPage({ stockData }) {
+            const [selectedMonth, setSelectedMonth] = useState('');
+
+            const { monthlyData, availableMonths, unitBreakdown } = useMemo(() => {
+                const getMonthKey = (timestamp) => {
+                    if (!timestamp) return null;
+                    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+                    if (isNaN(date.getTime())) return null;
+                    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                };
+                
+                const groupedByMonth = stockData.reduce((acc, item) => {
+                    const monthKey = getMonthKey(item.deliveryDate);
+                    if (!monthKey) return acc;
+
+                    if (!acc[monthKey]) {
+                        acc[monthKey] = {
+                            totalOmzet: 0, totalHpp: 0, totalProfit: 0, totalUnpaidHpp: 0,
+                            totalAvailableInventoryValue: 0, avgHppData: {}, modelCounts: {},
+                            totalAvailableStockCount: 0, unitBreakdown: {}
+                        };
+                    }
+                    
+                    acc[monthKey].totalHpp += item.hpp || 0;
+                     if (item.paidStatus === 'Unpaid') {
+                         acc[monthKey].totalUnpaidHpp += item.hpp || 0;
+                    }
+                    const simpleModelKey = item.phoneModel || 'N/A';
+                    if (!acc[monthKey].modelCounts[simpleModelKey]) {
+                        acc[monthKey].modelCounts[simpleModelKey] = 0;
+                    }
+                    acc[monthKey].modelCounts[simpleModelKey] += 1;
+
+
+                    if (item.availability === 'SOLD' && item.soldPrice > 0) {
+                        acc[monthKey].totalOmzet += item.soldPrice || 0;
+                        acc[monthKey].totalProfit += item.profit || 0;
+                    }
+                    
+                    if (item.availability === 'Available') {
+                        acc[monthKey].totalAvailableInventoryValue += item.hpp || 0;
+                        acc[monthKey].totalAvailableStockCount += 1;
+                        const modelKey = `${item.phoneModel || 'N/A'} ${item.storage || ''}`.trim();
+                        if (modelKey) {
+                            if (!acc[monthKey].avgHppData[modelKey]) {
+                                acc[monthKey].avgHppData[modelKey] = { totalHpp: 0, count: 0 };
+                            }
+                            acc[monthKey].avgHppData[modelKey].totalHpp += item.hpp || 0;
+                            acc[monthKey].avgHppData[modelKey].count += 1;
+                        }
+
+                        const unitKey = `${item.phoneModel}-${item.storage}-${item.color}`;
+                        if(!acc[monthKey].unitBreakdown[unitKey]) {
+                            acc[monthKey].unitBreakdown[unitKey] = { model: item.phoneModel, storage: item.storage, color: item.color, count: 0 };
+                        }
+                        acc[monthKey].unitBreakdown[unitKey].count++;
+
+                    }
+
+                    return acc;
+                }, {});
+                
+                const availableMonths = Object.keys(groupedByMonth).sort().reverse();
+                const currentMonthData = groupedByMonth[selectedMonth] || {};
+                const unitBreakdown = Object.values(currentMonthData.unitBreakdown || {}).sort((a,b) => a.model.localeCompare(b.model));
+
+
+                return { monthlyData: groupedByMonth, availableMonths, unitBreakdown };
+            }, [stockData, selectedMonth]);
+
+            useEffect(() => {
+                if (availableMonths.length > 0 && !selectedMonth) {
+                    setSelectedMonth(availableMonths[0]);
+                } else if (availableMonths.length === 0 && !selectedMonth) {
+                    setSelectedMonth(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`);
+                }
+            }, [availableMonths, selectedMonth]);
+
+            const currentReport = monthlyData[selectedMonth] || { totalOmzet: 0, totalHpp: 0, totalProfit: 0, totalUnpaidHpp: 0, totalAvailableInventoryValue: 0, totalAvailableStockCount: 0, avgHppData: {}, modelCounts: {} };
+            
+            const averageHppList = Object.entries(currentReport.avgHppData).map(([model, data]) => ({
+                model,
+                avgHpp: data.count > 0 ? data.totalHpp / data.count : 0
+            })).sort((a, b) => a.model.localeCompare(b.model));
+
+            return (
+                <div className="container mx-auto">
+                    <h2 className="text-3xl font-bold text-white mb-6">Financial Report</h2>
+                    <div className="bg-gray-800 shadow-2xl rounded-lg p-6 text-white">
+                        <div className="mb-6">
+                            <label htmlFor="month-select" className="block text-sm font-medium text-gray-300 mb-2">Select Month:</label>
+                            <select
+                                id="month-select"
+                                value={selectedMonth}
+                                onChange={e => setSelectedMonth(e.target.value)}
+                                className="bg-gray-700 p-2 rounded-md border border-gray-600 w-full md:w-1/3"
+                            >
+                                {availableMonths.length > 0 ? (
+                                    availableMonths.map(month => (
+                                        <option key={month} value={month}>
+                                            {new Date(month + '-02').toLocaleString('default', { month: 'long', year: 'numeric' })}
+                                        </option>
+                                    ))
+                                ) : (
+                                    <option value={selectedMonth}>
+                                        { selectedMonth ? new Date(selectedMonth + '-02').toLocaleString('default', { month: 'long', year: 'numeric' }) : "No data available"}
+                                    </option>
+                                )}
+                            </select>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+                            <div className="bg-gray-700 p-6 rounded-lg">
+                                <h3 className="text-lg font-medium text-gray-400">Total Omzet (Sold)</h3>
+                                <p className="text-3xl font-bold text-blue-400 mt-2">{formatRupiahDisplay(currentReport.totalOmzet)}</p>
+                            </div>
+                            <div className="bg-gray-700 p-6 rounded-lg">
+                                <h3 className="text-lg font-medium text-gray-400">Total Profit (Sold)</h3>
+                                <p className="text-3xl font-bold text-green-400 mt-2">{formatRupiahDisplay(currentReport.totalProfit)}</p>
+                            </div>
+                            <div className="bg-gray-700 p-6 rounded-lg">
+                                <h3 className="text-lg font-medium text-gray-400">Total HPP (All Items)</h3>
+                                <p className="text-3xl font-bold text-yellow-400 mt-2">{formatRupiahDisplay(currentReport.totalHpp)}</p>
+                            </div>
+                             <div className="bg-gray-700 p-6 rounded-lg">
+                                <h3 className="text-lg font-medium text-gray-400">Total Unpaid HPP</h3>
+                                <p className="text-3xl font-bold text-red-400 mt-2">{formatRupiahDisplay(currentReport.totalUnpaidHpp)}</p>
+                            </div>
+                            <div className="bg-gray-700 p-6 rounded-lg">
+                                <h3 className="text-lg font-medium text-gray-400">Available Inventory Value</h3>
+                                <p className="text-3xl font-bold text-indigo-400 mt-2">{formatRupiahDisplay(currentReport.totalAvailableInventoryValue)}</p>
+                            </div>
+                             <div className="bg-gray-700 p-6 rounded-lg">
+                                <h3 className="text-lg font-medium text-gray-400">Available Stock Count</h3>
+                                <p className="text-3xl font-bold text-pink-400 mt-2">{currentReport.totalAvailableStockCount} <span className="text-lg">Units</span></p>
+                            </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-8 items-start">
+                            <div className="lg:col-span-1">
+                                <h3 className="text-xl font-bold mb-4">Average HPP (Available Stock)</h3>
+                                <div className="bg-gray-700 shadow-lg rounded-lg overflow-hidden">
+                                    <div className="overflow-y-auto max-h-96">
+                                        {averageHppList.length > 0 ? (
+                                            <table className="min-w-full divide-y divide-gray-600">
+                                                <thead className="bg-gray-600 sticky top-0">
+                                                    <tr>
+                                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Phone Model & Storage</th>
+                                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Average HPP</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="bg-gray-700 divide-y divide-gray-600">
+                                                    {averageHppList.map((item) => (
+                                                        <tr key={item.model} className="hover:bg-gray-600/50 transition">
+                                                            <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">{item.model}</td>
+                                                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300">{formatRupiahDisplay(item.avgHpp)}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        ) : (
+                                            <div className="text-center p-10 text-gray-400">No available stock for this month.</div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                             <div className="lg:col-span-1">
+                                <h3 className="text-xl font-bold mb-4">Model Distribution by Unit (All)</h3>
+                                <div className="bg-gray-700 shadow-lg rounded-lg p-4 flex justify-center items-center h-full">
+                                   <ModelPieChart chartData={currentReport.modelCounts} />
+                                </div>
+                            </div>
+                            <div className="lg:col-span-1">
+                               <UnitBreakdownCard data={unitBreakdown} />
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            );
+        }
+
+        // --- New Component for Phone Data Management ---
+        function PhoneDataManagementPage({ userId, phoneData, setPhoneData }) {
+            const [editingModel, setEditingModel] = useState(null);
+            const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+
+            const handleSave = async (updatedData) => {
+                const phoneDataRef = window.firebase.doc(db, 'artifacts', appId, 'users', userId, 'phone_data', 'master_list');
+                try {
+                    await window.firebase.setDoc(phoneDataRef, { models: updatedData });
+                    setEditingModel(null);
+                    setIsAddModalOpen(false);
+                } catch (error) {
+                    console.error("Failed to save phone data:", error);
+                    alert("Error saving data.");
+                }
+            };
+            
+            const handleDelete = (modelName) => {
+                if (window.confirm(`Are you sure you want to delete the model "${modelName}"? This cannot be undone.`)) {
+                    const updatedData = { ...phoneData };
+                    delete updatedData[modelName];
+                    handleSave(updatedData);
+                }
+            };
+
+            return (
+                <div className="container mx-auto">
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-3xl font-bold text-white">Manage Phone Data</h2>
+                        <button onClick={() => setIsAddModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Add New Model</button>
+                    </div>
+
+                    {isAddModalOpen && <EditPhoneDataModal 
+                        phoneData={phoneData}
+                        onSave={handleSave}
+                        closeModal={() => setIsAddModalOpen(false)} 
+                    />}
+                    {editingModel && <EditPhoneDataModal 
+                        modelName={editingModel} 
+                        modelData={phoneData[editingModel]}
+                        phoneData={phoneData}
+                        onSave={handleSave}
+                        closeModal={() => setEditingModel(null)} 
+                    />}
+
+                    <div className="bg-gray-800 shadow-2xl rounded-lg p-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {Object.keys(phoneData).sort().map(modelName => (
+                                <div key={modelName} className="bg-gray-700 p-4 rounded-lg flex flex-col">
+                                    <h3 className="font-bold text-lg mb-2">{modelName}</h3>
+                                    <div className="text-sm text-gray-300 space-y-1 flex-grow">
+                                        <p><strong>Storage:</strong> {phoneData[modelName].storage.join(', ') || 'N/A'}</p>
+                                        <p><strong>Colors:</strong> {phoneData[modelName].colors.join(', ') || 'N/A'}</p>
+                                        <p><strong>RAM:</strong> {phoneData[modelName].ram.join(', ') || 'N/A'}</p>
+                                    </div>
+                                    <div className="flex gap-2 mt-4">
+                                        <button onClick={() => setEditingModel(modelName)} className="w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Edit</button>
+                                        <button onClick={() => handleDelete(modelName)} className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Delete</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )
+        }
+        
+        // --- New Modal for Adding/Editing Phone Data ---
+        function EditPhoneDataModal({ modelName, modelData, phoneData, onSave, closeModal }) {
+            const [name, setName] = useState(modelName || '');
+            const [storage, setStorage] = useState(modelData?.storage?.join(', ') || '');
+            const [colors, setColors] = useState(modelData?.colors?.join(', ') || '');
+            const [ram, setRam] = useState(modelData?.ram?.join(', ') || '');
+            
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (!name.trim()) {
+                    alert("Model name cannot be empty.");
+                    return;
+                }
+                
+                const newModelKey = name.trim();
+                if (!modelName && phoneData[newModelKey]) {
+                    alert("A model with this name already exists.");
+                    return;
+                }
+
+                const updatedData = { ...phoneData };
+                // If renaming, delete the old key
+                if(modelName && modelName !== newModelKey) {
+                    delete updatedData[modelName];
+                }
+
+                updatedData[newModelKey] = {
+                    storage: storage.split(',').map(s => s.trim()).filter(Boolean),
+                    colors: colors.split(',').map(c => c.trim()).filter(Boolean),
+                    ram: ram.split(',').map(r => r.trim()).filter(Boolean),
+                };
+                onSave(updatedData);
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-60 p-4">
+                    <div className="bg-gray-800 rounded-lg shadow-xl p-8 w-full max-w-lg text-white">
+                        <h3 className="text-2xl font-bold mb-6">{modelName ? `Edit ${modelName}` : "Add New Phone Model"}</h3>
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-300 mb-2">Model Name</label>
+                                <input type="text" value={name} onChange={e => setName(e.target.value)} required className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-300 mb-2">Storage Options (comma separated)</label>
+                                <input type="text" value={storage} onChange={e => setStorage(e.target.value)} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" />
+                            </div>
+                             <div>
+                                <label className="block text-sm font-medium text-gray-300 mb-2">Color Options (comma separated)</label>
+                                <input type="text" value={colors} onChange={e => setColors(e.target.value)} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" />
+                            </div>
+                             <div>
+                                <label className="block text-sm font-medium text-gray-300 mb-2">RAM Options (comma separated)</label>
+                                <input type="text" value={ram} onChange={e => setRam(e.target.value)} className="w-full p-3 bg-gray-700 rounded-md border border-gray-600" />
+                            </div>
+                            <div className="flex justify-end space-x-4 pt-4">
+                                <button type="button" onClick={closeModal} className="px-6 py-2 rounded-md bg-gray-600 hover:bg-gray-500 transition">Cancel</button>
+                                <button type="submit" className="px-6 py-2 rounded-md bg-blue-600 hover:bg-blue-700 transition">Save</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
