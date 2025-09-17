@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Validasi Invoice - Griphub</title>
+    <link rel="icon" type="image/png" href="https://i.imgur.com/SSbdOdP.png" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ["Inter", "sans-serif"],
+                    },
+                },
+            },
+        };
+    </script>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-300 flex items-center justify-center min-h-screen">
+
+    <div id="validator" class="w-full max-w-md mx-auto bg-white dark:bg-gray-800 rounded-xl shadow-2xl p-8 text-center">
+        <img src="https://i.imgur.com/SSbdOdP.png" alt="Griphub Logo" class="h-24 w-24 mx-auto mb-6" />
+        
+        <!-- Loading State -->
+        <div id="loading-state">
+            <h1 class="text-2xl font-bold text-gray-800 dark:text-white">Memvalidasi Invoice...</h1>
+            <p class="text-gray-500 dark:text-gray-400 mt-2">Mohon tunggu sebentar.</p>
+            <div class="mt-6">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+            </div>
+        </div>
+
+        <!-- Success State -->
+        <div id="success-state" class="hidden">
+            <div class="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-green-100 dark:bg-green-900/50 mb-5">
+                <svg class="h-8 w-8 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                </svg>
+            </div>
+            <h1 class="text-3xl font-bold text-green-600 dark:text-green-400">Invoice Lunas</h1>
+            <p class="text-gray-600 dark:text-gray-300 mt-2">Pembayaran untuk invoice ini telah dikonfirmasi.</p>
+            <div class="mt-6 text-left bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg space-y-2 text-sm">
+                <div class="flex justify-between">
+                    <span class="font-semibold text-gray-500 dark:text-gray-400">No. Invoice:</span>
+                    <span id="invoice-number" class="font-mono font-semibold"></span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="font-semibold text-gray-500 dark:text-gray-400">Tanggal Lunas:</span>
+                    <span id="invoice-date" class="font-semibold"></span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="font-semibold text-gray-500 dark:text-gray-400">Customer:</span>
+                    <span id="customer-name" class="font-semibold"></span>
+                </div>
+                <div class="flex justify-between border-t border-gray-200 dark:border-gray-600 mt-3 pt-3">
+                    <span class="font-bold text-base">Total Bayar:</span>
+                    <span id="invoice-total" class="font-bold text-base"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Not Paid State -->
+        <div id="not-paid-state" class="hidden">
+            <div class="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-yellow-100 dark:bg-yellow-900/50 mb-5">
+                <svg class="h-8 w-8 text-yellow-600 dark:text-yellow-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+            </div>
+            <h1 class="text-3xl font-bold text-yellow-600 dark:text-yellow-400">Invoice Belum Lunas</h1>
+            <p class="text-gray-600 dark:text-gray-300 mt-2">Invoice ini tercatat <span class="font-bold">BELUM LUNAS</span> atau masih memiliki sisa tagihan.</p>
+             <div class="mt-6 text-left bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg space-y-2 text-sm">
+                <div class="flex justify-between">
+                    <span class="font-semibold text-gray-500 dark:text-gray-400">No. Invoice:</span>
+                    <span id="invoice-number-not-paid" class="font-mono font-semibold"></span>
+                </div>
+                 <div class="flex justify-between">
+                    <span class="font-semibold text-gray-500 dark:text-gray-400">Customer:</span>
+                    <span id="customer-name-not-paid" class="font-semibold"></span>
+                </div>
+                <div class="flex justify-between border-t border-gray-200 dark:border-gray-600 mt-3 pt-3">
+                    <span class="font-bold text-base">Sisa Tagihan:</span>
+                    <span id="invoice-balance" class="font-bold text-base text-red-500"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Not Found State -->
+        <div id="not-found-state" class="hidden">
+            <div class="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-red-100 dark:bg-red-900/50 mb-5">
+                <svg class="h-8 w-8 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                </svg>
+            </div>
+            <h1 class="text-3xl font-bold text-red-600 dark:text-red-400">Invoice Tidak Ditemukan</h1>
+            <p class="text-gray-600 dark:text-gray-300 mt-2">Invoice dengan nomor yang Anda pindai tidak terdaftar di sistem kami.</p>
+        </div>
+         <p class="text-xs text-gray-400 dark:text-gray-500 mt-8">&copy; 2025 Griphub Ponsel</p>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Firebase Configuration ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyADsec0BmVk5NeV5BCZIhNt7f6re9Og5hk",
+            authDomain: "griphub-stock.firebaseapp.com",
+            projectId: "griphub-stock",
+            storageBucket: "griphub-stock.appspot.com",
+            messagingSenderId: "704654191502",
+            appId: "1:704654191502:web:54db4f7167866ea0fa12df",
+            measurementId: "G-Q5N08D310B",
+        };
+        
+        const OWNER_USER_ID = "In0ALPiF22OhaRt6PFXuMHdTCOi1";
+
+        let app, db;
+        try {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+        } catch (e) {
+            console.error("Firebase initialization failed:", e);
+            // Show error on page
+        }
+
+        const formatRupiah = (number) => {
+            if (isNaN(number) || number === null) return "Rp 0";
+            return new Intl.NumberFormat("id-ID", {
+                style: "currency",
+                currency: "IDR",
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 0,
+            }).format(number);
+        };
+
+        const formatDate = (date) => {
+            if (!date) return "N/A";
+            const d = date.toDate ? date.toDate() : new Date(date);
+            if (isNaN(d.getTime())) return "N/A";
+            return d.toLocaleDateString("id-ID", {
+                year: 'numeric', month: 'long', day: 'numeric'
+            });
+        };
+
+        const showState = (stateId) => {
+            document.getElementById('loading-state').classList.add('hidden');
+            document.getElementById('success-state').classList.add('hidden');
+            document.getElementById('not-paid-state').classList.add('hidden');
+            document.getElementById('not-found-state').classList.add('hidden');
+            document.getElementById(stateId).classList.remove('hidden');
+        };
+
+        async function validateInvoice() {
+            if (!db) {
+                showState('not-found-state');
+                document.querySelector('#not-found-state p').textContent = 'Gagal terhubung ke database.';
+                return;
+            }
+
+            const params = new URLSearchParams(window.location.search);
+            const invoiceId = params.get('invoice');
+
+            if (!invoiceId) {
+                showState('not-found-state');
+                 document.querySelector('#not-found-state p').textContent = 'ID Invoice tidak ditemukan di URL.';
+                return;
+            }
+
+            try {
+                const invoiceRef = doc(db, "artifacts", firebaseConfig.appId, "users", OWNER_USER_ID, "invoices", invoiceId);
+                const docSnap = await getDoc(invoiceRef);
+
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    const paymentStatus = data.paymentStatus || 'Belum Lunas';
+                    const total = data.total || 0;
+                    const amountPaid = data.amountPaid || 0;
+                    const balanceDue = total - amountPaid;
+
+                    if (paymentStatus.toUpperCase() === 'LUNAS' && balanceDue <= 0) {
+                        document.getElementById('invoice-number').textContent = data.invoiceNumber;
+                        document.getElementById('invoice-date').textContent = formatDate(data.date);
+                        document.getElementById('customer-name').textContent = data.customerName;
+                        document.getElementById('invoice-total').textContent = formatRupiah(data.total);
+                        showState('success-state');
+                    } else {
+                        document.getElementById('invoice-number-not-paid').textContent = data.invoiceNumber;
+                        document.getElementById('customer-name-not-paid').textContent = data.customerName;
+                        document.getElementById('invoice-balance').textContent = formatRupiah(balanceDue);
+                        showState('not-paid-state');
+                    }
+                } else {
+                    showState('not-found-state');
+                }
+            } catch (error) {
+                console.error("Error fetching invoice:", error);
+                showState('not-found-state');
+                document.querySelector('#not-found-state p').textContent = 'Terjadi kesalahan saat mengambil data.';
+            }
+        }
+
+        // Run validation on page load
+        validateInvoice();
+
+    </script>
+</body>
+</html>
